@@ -11,6 +11,7 @@ import com.seckill.goods.entity.Stock;
 import com.seckill.goods.mapper.GoodsMapper;
 import com.seckill.goods.mapper.SeckillActivityMapper;
 import com.seckill.goods.mapper.StockMapper;
+import com.seckill.goods.service.ActivityPreheatService;
 import com.seckill.goods.service.SeckillActivityService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -25,6 +26,7 @@ public class SeckillActivityServiceImpl implements SeckillActivityService {
     private final SeckillActivityMapper activityMapper;
     private final GoodsMapper goodsMapper;
     private final StockMapper stockMapper;
+    private final ActivityPreheatService preheatService;
 
     @Override
     @Transactional
@@ -63,6 +65,11 @@ public class SeckillActivityServiceImpl implements SeckillActivityService {
             stockMapper.insert(stock);
         } else {
             stockMapper.updateById(stock);
+        }
+
+        // M3：创建"立即开始/即将开始"的活动时立刻预热（否则要等定时任务最多 30 秒）
+        if (!activity.getStartTime().isAfter(LocalDateTime.now().plusMinutes(5))) {
+            preheatService.preheat(activity);
         }
         return activity;
     }

@@ -13,6 +13,11 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.stereotype.Service;
 
+/**
+ * 用户注册/登录实现。
+ * 密码安全：BCrypt 是"加盐的慢哈希"，同样的明文每次加密结果都不同，
+ * 只能单向比对（matches），无法反解——数据库泄露也不会暴露明文密码。
+ */
 @Service
 @RequiredArgsConstructor
 public class UserServiceImpl implements UserService {
@@ -22,6 +27,8 @@ public class UserServiceImpl implements UserService {
 
     @Override
     public UserVO register(RegisterDTO dto) {
+        // 先查重：username 有唯一索引，但主动查一次可以返回友好的业务码
+        //（否则要依赖全局异常处理器去翻译 DuplicateKeyException）
         Long count = userMapper.selectCount(
                 new LambdaQueryWrapper<User>().eq(User::getUsername, dto.getUsername()));
         if (count > 0) {

@@ -15,6 +15,9 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+/**
+ * 秒杀活动接口层（单体阶段挂在 goods 域下，M5 拆分后归 goods-service）。
+ */
 @RestController
 @RequestMapping("/api/goods/activity")
 @RequiredArgsConstructor

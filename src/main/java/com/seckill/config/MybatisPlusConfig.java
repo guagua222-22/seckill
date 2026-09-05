@@ -6,6 +6,11 @@ import com.baomidou.mybatisplus.extension.plugins.inner.PaginationInnerIntercept
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
+/**
+ * MyBatis-Plus 配置。
+ * 分页查询（selectPage）依赖 PaginationInnerInterceptor 拦截 SQL 拼 LIMIT，
+ * 不注册这个 Bean 的话，Page 对象不会生效、会查出全量数据。
+ */
 @Configuration
 public class MybatisPlusConfig {
 

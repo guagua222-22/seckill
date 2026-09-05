@@ -17,10 +17,12 @@ import com.seckill.seckill.dto.SeckillOrderDTO;
 import com.seckill.seckill.service.SeckillOrderService;
 import com.seckill.user.entity.User;
 import com.seckill.user.mapper.UserMapper;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.testcontainers.containers.MySQLContainer;
@@ -51,6 +53,8 @@ class SeckillOrderIntegrationTest {
         registry.add("spring.datasource.url", mysql::getJdbcUrl);
         registry.add("spring.datasource.username", mysql::getUsername);
         registry.add("spring.datasource.password", mysql::getPassword);
+        // 测试使用 Redis db 15，与开发数据（db 0）物理隔离
+        registry.add("spring.data.redis.database", () -> 15);
     }
 
     @Autowired
@@ -65,6 +69,17 @@ class SeckillOrderIntegrationTest {
     private OrderMapper orderMapper;
     @Autowired
     private StockMapper stockMapper;
+    @Autowired
+    private StringRedisTemplate redis;
+
+    @BeforeEach
+    void cleanRedis() {
+        // 每个用例前清空 db 15，避免上一个用例的库存 key 干扰
+        redis.execute((org.springframework.data.redis.core.RedisCallback<Void>) connection -> {
+            connection.serverCommands().flushDb();
+            return null;
+        });
+    }
 
     @Test
     @DisplayName("100 库存：100 人抢光，第 101 人失败，同人重复抢被拦，超卖为 0")
@@ -121,6 +136,10 @@ class SeckillOrderIntegrationTest {
                 .eq(Stock::getGoodsId, goods.getId()));
         assertEquals(0, stock.getAvailableStock(), "可用库存应为 0");
         assertEquals(100, stock.getSoldCount(), "已售应等于总库存");
+
+        // M3 新增：Redis 预扣计数与 DB 库存对账一致（两侧独立扣减，必须同为 0）
+        assertEquals(0, seckillOrderService.getRedisStock(activity.getId()),
+                "Redis 剩余库存应与 DB 一致为 0");
     }
 
     private SeckillOrderDTO dto(Long userId, Long activityId, String requestId) {

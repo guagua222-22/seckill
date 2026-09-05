@@ -3,6 +3,18 @@ package com.seckill.common.result;
 import lombok.AllArgsConstructor;
 import lombok.Getter;
 
+/**
+ * 业务错误码约定。
+ * 按号段划分问题域，排查问题时看码就知道是哪一类：
+ * <pre>
+ * 0       成功
+ * 400     参数类错误（校验失败、请求体格式错误）
+ * 100x    用户域（注册/登录）
+ * 200x    商品/活动域（含秒杀时间窗、库存）
+ * 300x    订单域（查单、重复下单）
+ * 500     系统兜底（未预期异常）
+ * </pre>
+ */
 @Getter
 @AllArgsConstructor
 public enum ErrorCode {

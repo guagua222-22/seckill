@@ -17,6 +17,11 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+/**
+ * 商品接口层。
+ * 路径约定：所有接口从第一天就带 /api/{域} 前缀，
+ * M5 拆微服务时网关按前缀路由即可，前端和测试脚本零改动。
+ */
 @RestController
 @RequestMapping("/api/goods")
 @RequiredArgsConstructor

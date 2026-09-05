@@ -9,6 +9,9 @@ import com.seckill.order.service.OrderService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
+/**
+ * 订单查询实现：走 uk_request_id 唯一索引，一次命中。
+ */
 @Service
 @RequiredArgsConstructor
 public class OrderServiceImpl implements OrderService {

@@ -9,6 +9,11 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+/**
+ * 订单查询接口。
+ * 查单按 requestId 而不是 orderId：前端下单拿到的是 requestId，
+ * 轮询查单时用它幂等地找到"我这次请求对应的订单"。
+ */
 @RestController
 @RequestMapping("/api/order")
 @RequiredArgsConstructor

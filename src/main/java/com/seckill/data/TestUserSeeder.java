@@ -14,6 +14,16 @@ import org.springframework.stereotype.Component;
 import java.util.ArrayList;
 import java.util.List;
 
+/**
+ * 10 万测试用户种子脚本（压测数据准备）。
+ *
+ * 触发方式：启动时带环境变量 SEED_USER_COUNT=100000 才会执行，
+ * 日常启动（不带变量）自动跳过，不会污染数据。
+ *
+ * 两个工程技巧：
+ * 1. 所有测试用户共用同一份 BCrypt 哈希——哈希一次约 100ms，10 万次要几小时；
+ * 2. 先删后插（test_ 前缀）保证重复执行不产生脏数据。
+ */
 @Slf4j
 @Component
 @RequiredArgsConstructor

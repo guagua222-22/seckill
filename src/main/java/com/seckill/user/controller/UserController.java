@@ -12,6 +12,11 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+/**
+ * 用户接口层。
+ * Controller 的职责边界：接收参数（@Valid 校验）、调用 service、包装 Result，
+ * 不放任何业务逻辑——业务逻辑都在 service，这是分层的基本功。
+ */
 @RestController
 @RequestMapping("/api/user")
 @RequiredArgsConstructor
