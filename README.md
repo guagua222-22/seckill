@@ -4,7 +4,7 @@
 
 ## 当前阶段
 
-M1：数据库设计与基础 CRUD（已完成）
+M2：秒杀核心链路 DB 版（已完成，含并发正确性压测验收）
 
 ## 快速启动
 
@@ -18,8 +18,8 @@ docker compose up -d
 # 3. 可选：灌入 10 万测试用户（用户名 test_1 ~ test_100000，密码统一 123456）
 SEED_USER_COUNT=100000 ./mvnw spring-boot:run
 
-# 4. 健康检查
-curl http://localhost:8080/actuator/health
+# 4. 验证台前端：浏览器打开 http://localhost:8080/
+#    健康检查：curl http://localhost:8080/actuator/health
 ```
 
 ## 已有接口
@@ -35,8 +35,22 @@ curl http://localhost:8080/actuator/health
 | POST /api/goods/activity | 创建秒杀活动（校验时间窗 + 灌入活动库存） |
 | GET /api/goods/activity/{id} | 活动详情 |
 | GET /api/goods/activity/page | 活动分页 |
+| POST /api/seckill/order | 秒杀下单（时间窗校验→一人一单→条件更新扣库存→落订单） |
+| GET /api/order/query?requestId= | 按请求ID查订单 |
 
 统一响应：`{"code":0,"message":"success","data":...}`；业务错误码见 `com.seckill.common.result.ErrorCode`。
+
+### 防超卖与防重复（M2 核心）
+
+- 扣库存用条件更新：`UPDATE t_stock SET available_stock = available_stock - 1 WHERE goods_id = ? AND available_stock > 0`，影响 0 行即库存不足
+- 一人一单：`uk_user_activity` 唯一索引 + 预检 + DuplicateKeyException 兜底（事务回滚已扣库存）
+- 请求幂等：`uk_request_id` 唯一索引
+
+### M2 压测结果（JMeter 5.6.3，本机）
+
+- 1000 并发抢 100 库存：订单数=100、可用库存=0、已售=100、重复用户=0，**超卖=0**，错误率 0%，QPS≈199，平均 RT 582ms
+- 同用户 10 并发：1 单成功、9 次被"已抢过"拦截
+- 时间窗外请求：未开始 2005 / 已结束 2006
 
 ## 数据库
 
@@ -50,8 +64,10 @@ Flyway 管理，V1 建 7 张表：t_user / t_goods / t_stock / t_seckill_activit
 ## 测试
 
 ```bash
-./mvnw test   # 12 个 Service 层单测 + jacoco 覆盖率检查（service 层 ≥ 60%）
+./mvnw test   # 18 个单测 + Testcontainers 集成测试（真实 MySQL 容器跑全链路）+ jacoco 覆盖率检查
 ```
+
+> 注意：Windows 下 Testcontainers 需要 Docker Desktop ≥ 4.44 且使用 testcontainers 2.x（本项目已锁定 2.0.5，兼容 Docker Desktop 29 的 docker_cli 管道）。
 
 ## 技术栈版本
 

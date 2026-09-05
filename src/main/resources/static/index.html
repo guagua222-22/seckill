@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>秒杀系统 · 验证台</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: "Segoe UI", "Microsoft YaHei", sans-serif; background: #f5f6fa; color: #2c3e50; padding: 24px; }
+  h1 { font-size: 22px; margin-bottom: 4px; }
+  .sub { color: #7f8c8d; font-size: 13px; margin-bottom: 20px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(360px, 1fr)); gap: 16px; }
+  .card { background: #fff; border-radius: 10px; padding: 18px; box-shadow: 0 1px 4px rgba(0,0,0,.06); }
+  .card h2 { font-size: 15px; margin-bottom: 12px; padding-bottom: 8px; border-bottom: 1px solid #ecf0f1; }
+  .row { display: flex; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; }
+  input, select { flex: 1; min-width: 120px; padding: 8px 10px; border: 1px solid #dcdde1; border-radius: 6px; font-size: 13px; }
+  input:focus { outline: none; border-color: #3498db; }
+  button { padding: 8px 16px; border: none; border-radius: 6px; background: #3498db; color: #fff; font-size: 13px; cursor: pointer; }
+  button:hover { background: #2980b9; }
+  button.gray { background: #95a5a6; }
+  button.green { background: #27ae60; }
+  button.red { background: #e74c3c; }
+  .log { background: #2c3e50; color: #2ecc71; font-family: Consolas, monospace; font-size: 12px; padding: 10px; border-radius: 6px; min-height: 80px; max-height: 220px; overflow-y: auto; white-space: pre-wrap; word-break: break-all; }
+  .log .err { color: #e74c3c; }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid #ecf0f1; }
+  th { color: #7f8c8d; font-weight: 600; }
+  .tip { font-size: 12px; color: #95a5a6; margin-top: 6px; }
+  .full { grid-column: 1 / -1; }
+</style>
+</head>
+<body>
+<h1>秒杀系统 · 验证台</h1>
+<div class="sub">后端接口验证页面（M2）· 应用地址即本页地址</div>
+
+<div class="grid">
+
+  <div class="card">
+    <h2>1. 用户 · 注册 / 登录</h2>
+    <div class="row">
+      <input id="regName" placeholder="用户名（4-32位）">
+      <input id="regPwd" placeholder="密码（≥6位）" type="password">
+    </div>
+    <div class="row">
+      <input id="regNick" placeholder="昵称（可选）">
+      <button class="green" onclick="register()">注册</button>
+      <button onclick="login()">登录</button>
+    </div>
+    <div class="tip" id="userInfo">未登录（默认压测用户 test_1，密码 123456）</div>
+  </div>
+
+  <div class="card">
+    <h2>2. 商品 · 列表 / 创建</h2>
+    <div class="row">
+      <input id="goodsName" placeholder="商品名称">
+      <input id="goodsPrice" placeholder="日常价" type="number" step="0.01">
+      <button class="green" onclick="createGoods()">创建商品</button>
+    </div>
+    <table id="goodsTable"><thead><tr><th>ID</th><th>名称</th><th>价格</th><th>库存</th></tr></thead><tbody></tbody></table>
+    <div class="tip">库存列 = 可用/总量（创建活动时自动灌入）</div>
+  </div>
+
+  <div class="card">
+    <h2>3. 活动 · 列表 / 创建</h2>
+    <div class="row">
+      <input id="actName" placeholder="活动名称">
+      <input id="actGoodsId" placeholder="商品ID" type="number">
+    </div>
+    <div class="row">
+      <input id="actPrice" placeholder="秒杀价" type="number" step="0.01">
+      <input id="actStock" placeholder="活动库存" type="number">
+    </div>
+    <div class="row">
+      <button class="green" onclick="createActivity('now')">创建并立即开始</button>
+      <button class="gray" onclick="createActivity('future')">创建（1小时后开始）</button>
+    </div>
+    <table id="actTable"><thead><tr><th>ID</th><th>名称</th><th>库存</th><th>状态</th></tr></thead><tbody></tbody></table>
+  </div>
+
+  <div class="card">
+    <h2>4. 秒杀 · 下单</h2>
+    <div class="row">
+      <input id="skUserId" placeholder="用户ID" type="number">
+      <input id="skActivityId" placeholder="活动ID" type="number">
+    </div>
+    <div class="row">
+      <button class="red" onclick="seckill()">⚡ 抢购</button>
+      <button class="gray" onclick="queryOrder()">按请求ID查单</button>
+    </div>
+    <div class="tip" id="lastRequest">最近请求ID：-</div>
+  </div>
+
+  <div class="card full">
+    <h2>5. 操作日志</h2>
+    <div class="log" id="log">等待操作…</div>
+  </div>
+</div>
+
+<script>
+const B = ''; // 同源
+let lastRequestId = '';
+const $ = id => document.getElementById(id);
+
+function log(msg, isErr) {
+  const el = $('log');
+  const time = new Date().toLocaleTimeString();
+  el.innerHTML += `<div class="${isErr ? 'err' : ''}">[${time}] ${msg}</div>`;
+  el.scrollTop = el.scrollHeight;
+}
+
+async function api(path, method, body) {
+  const res = await fetch(B + path, {
+    method,
+    headers: { 'Content-Type': 'application/json' },
+    body: body ? JSON.stringify(body) : undefined
+  });
+  return res.json();
+}
+
+async function register() {
+  try {
+    const r = await api('/api/user/register', 'POST', {
+      username: $('regName').value, password: $('regPwd').value, nickname: $('regNick').value
+    });
+    log(`注册: ${JSON.stringify(r)}`, r.code !== 0);
+    if (r.code === 0) { $('userInfo').textContent = `已登录: ${r.data.username} (id=${r.data.id})`; $('skUserId').value = r.data.id; }
+  } catch (e) { log('注册请求失败: ' + e, true); }
+}
+
+async function login() {
+  try {
+    const r = await api('/api/user/login', 'POST', {
+      username: $('regName').value, password: $('regPwd').value
+    });
+    log(`登录: ${JSON.stringify(r)}`, r.code !== 0);
+    if (r.code === 0) { $('userInfo').textContent = `已登录: ${r.data.username} (id=${r.data.id})`; $('skUserId').value = r.data.id; }
+  } catch (e) { log('登录请求失败: ' + e, true); }
+}
+
+async function createGoods() {
+  try {
+    const r = await api('/api/goods', 'POST', {
+      goodsName: $('goodsName').value, normalPrice: Number($('goodsPrice').value)
+    });
+    log(`创建商品: ${JSON.stringify(r)}`, r.code !== 0);
+    if (r.code === 0) { $('actGoodsId').value = r.data.id; loadGoods(); }
+  } catch (e) { log('创建商品失败: ' + e, true); }
+}
+
+async function createActivity(mode) {
+  try {
+    const now = new Date();
+    const start = mode === 'now' ? new Date(now.getTime() - 60 * 1000) : new Date(now.getTime() + 3600 * 1000);
+    const end = new Date(now.getTime() + 3600 * 1000 * 3);
+    const fmt = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}T${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}:${String(d.getSeconds()).padStart(2,'0')}`;
+    const r = await api('/api/goods/activity', 'POST', {
+      activityName: $('actName').value, goodsId: Number($('actGoodsId').value),
+      seckillPrice: Number($('actPrice').value), totalStock: Number($('actStock').value),
+      startTime: fmt(start), endTime: fmt(end)
+    });
+    log(`创建活动: ${JSON.stringify(r)}`, r.code !== 0);
+    if (r.code === 0) { $('skActivityId').value = r.data.id; loadActivities(); loadGoods(); }
+  } catch (e) { log('创建活动失败: ' + e, true); }
+}
+
+async function seckill() {
+  try {
+    lastRequestId = crypto.randomUUID();
+    $('lastRequest').textContent = `最近请求ID：${lastRequestId}`;
+    const r = await api('/api/seckill/order', 'POST', {
+      userId: Number($('skUserId').value), activityId: Number($('skActivityId').value),
+      requestId: lastRequestId
+    });
+    log(`下单: ${JSON.stringify(r)}`, r.code !== 0);
+    if (r.code === 0) loadGoods();
+  } catch (e) { log('下单失败: ' + e, true); }
+}
+
+async function queryOrder() {
+  try {
+    const r = await api(`/api/order/query?requestId=${encodeURIComponent(lastRequestId || $('lastRequest').value)}`, 'GET');
+    log(`查单: ${JSON.stringify(r)}`, r.code !== 0);
+  } catch (e) { log('查单失败: ' + e, true); }
+}
+
+async function loadGoods() {
+  const r = await api('/api/goods/page?page=1&size=20', 'GET');
+  const tb = $('goodsTable').querySelector('tbody');
+  tb.innerHTML = '';
+  (r.data?.records || []).forEach(g => {
+    // 库存字段在分页接口里没有，详情接口才有；简单展示
+    tb.innerHTML += `<tr><td>${g.id}</td><td>${g.goodsName}</td><td>${g.normalPrice}</td><td>-</td></tr>`;
+  });
+}
+
+async function loadActivities() {
+  const r = await api('/api/goods/activity/page?page=1&size=20', 'GET');
+  const tb = $('actTable').querySelector('tbody');
+  tb.innerHTML = '';
+  (r.data?.records || []).forEach(a => {
+    const status = a.status === 0 ? '未开始' : a.status === 1 ? '进行中' : '已结束';
+    tb.innerHTML += `<tr><td>${a.id}</td><td>${a.activityName}</td><td>${a.totalStock}</td><td>${status}</td></tr>`;
+  });
+}
+
+loadGoods();
+loadActivities();
+$('skUserId').value = 1; // 默认 test_1
+log('验证台就绪。提示：先在第2步创建商品 → 第3步创建活动（立即开始）→ 第4步抢购。');
+</script>
+</body>
+</html>
