@@ -4,12 +4,12 @@
 
 ## 当前阶段
 
-M3：Redis 缓存 + Lua 预扣（已完成，含压测对比验收）
+M4：RocketMQ 异步下单 + 本地消息表可靠投递（已完成，含全链路集成测试）
 
 ## 快速启动
 
 ```bash
-# 1. 启动中间件（MySQL 8.0.36 映射宿主 3307 + Redis 7.2.4）
+# 1. 启动中间件（MySQL 8.0.36 + Redis 7.2.4 + RocketMQ 4.9.4 namesrv/broker）
 docker compose up -d
 
 # 2. 启动应用（JDK 21）
@@ -35,7 +35,7 @@ SEED_USER_COUNT=100000 ./mvnw spring-boot:run
 | POST /api/goods/activity | 创建秒杀活动（校验时间窗 + 灌入活动库存） |
 | GET /api/goods/activity/{id} | 活动详情 |
 | GET /api/goods/activity/page | 活动分页 |
-| POST /api/seckill/order | 秒杀下单（M3：Lua 原子预扣 → DB 落单双保险，Redis 故障自动降级 DB 直写） |
+| POST /api/seckill/order | 秒杀下单（M4：Lua 预扣 → 本地消息表 → RocketMQ 异步落单，发送失败自动补偿重发） |
 | GET /api/seckill/stock/{activityId} | Redis 实时剩余库存（-1 表示未预热） |
 | GET /api/order/query?requestId= | 按请求ID查订单 |
 
@@ -59,6 +59,19 @@ SEED_USER_COUNT=100000 ./mvnw spring-boot:run
 | 雪崩 | 物理 TTL 30min ± 随机 5min |
 
 库存字段刻意不进详情缓存，永远现查 t_stock。
+
+### 异步下单链路（M4）
+
+| 步骤 | 组件 | 说明 |
+|---|---|---|
+| 1. 入口闸门 | Redis Lua | 原子判重→判库存→预扣→登记，失败直接返回 |
+| 2. 本地消息表 | MySQL `t_local_message` | 与预扣在同一事务写入，状态 PENDING |
+| 3. MQ 发送 | RocketMQ `asyncSend` | 发送成功→消息状态改 SENT；失败→保持 PENDING |
+| 4. 消费落单 | `SeckillOrderConsumerListener` | 消费成功→订单入库 + 记录状态 DONE；失败→MQ 自动重试 16 次 |
+| 5. 补偿重发 | `MessageResendJob`（每 30s） | 扫描超时 PENDING 消息重新发送 |
+| 6. 对账清理 | `MessageReconcileJob`（每小时） | 已 SENT 但消费未确认的消息回查状态 |
+
+选用 RocketMQ 4.9.4 而非 5.x：5.1.4 镜像内置 JDK 8u372 的 cgroup v2 检测在 Docker Desktop WSL2 下 NPE，导致 broker `StoreUtil` 初始化失败、消费端拉取全部报错。4.9.4 使用更早的 JDK 8 无此问题，且经典 remoting 协议与 `rocketmq-spring-boot-starter:2.3.2` 完全兼容。
 
 ### 压测结果
 
@@ -87,12 +100,13 @@ Flyway 管理，V1 建 7 张表：t_user / t_goods / t_stock / t_seckill_activit
 ## 测试
 
 ```bash
-./mvnw test   # 31 个测试：单测 + Lua 脚本并发测试（200 线程抢 100 库存）+ Testcontainers 全链路集成测试
+./mvnw test   # 39 个测试：单测 + Lua 脚本并发测试（200 线程抢 100 库存）+ Testcontainers 全链路集成测试（含 MQ 异步消费）
 ```
 
 > 注意：
 > - Windows 下 Testcontainers 需要 Docker Desktop ≥ 4.44 且使用 testcontainers 2.x（本项目已锁定 2.0.5，兼容 Docker Desktop 29 的 docker_cli 管道）。
 > - Lua 脚本测试与集成测试直连本机 Redis 容器的 **db 15**（与开发库 db 0 隔离），需 docker compose 的 redis 在运行。
+> - 集成测试还需 docker compose 的 RocketMQ（namesrv + broker）在运行，测试用独立 topic/consumer-group 与开发环境隔离。
 
 ## 技术栈版本
 
@@ -103,3 +117,5 @@ Flyway 管理，V1 建 7 张表：t_user / t_goods / t_stock / t_seckill_activit
 | MyBatis-Plus | 3.5.7 |
 | Flyway | 9.22.3 |
 | MySQL / Redis | 8.0.36 / 7.2.4（docker） |
+| RocketMQ | 4.9.4（broker/namesrv）+ spring-boot-starter 2.3.2 |
+| Redisson | 3.32.0（分布式锁） |

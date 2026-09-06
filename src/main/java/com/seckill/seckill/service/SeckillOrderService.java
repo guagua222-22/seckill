@@ -5,12 +5,12 @@ import com.seckill.seckill.dto.SeckillOrderDTO;
 public interface SeckillOrderService {
 
     /**
-     * DB 版同步下单：时间窗校验 → 一人一单预检 → 条件更新扣库存 → 落订单。
-     * M3 起内部升级为 Redis Lua 预扣 + DB 落单双保险。
-     *
-     * @return 订单ID
+     * 秒杀下单（M4：异步排队模式）。
+     * 入口只做校验 + Lua 预扣 + 本地事务落"流水+消息"，随后立即返回"排队中"，
+     * 真正的落单由 RocketMQ 消费端异步完成（前端轮询 /api/order/query 拿结果）。
+     * Redis 故障时降级 DB 同步直写（M2 链路）。
      */
-    Long createOrder(SeckillOrderDTO dto);
+    void createOrder(SeckillOrderDTO dto);
 
     /**
      * 查询 Redis 中某活动的实时剩余库存（前端展示用）。

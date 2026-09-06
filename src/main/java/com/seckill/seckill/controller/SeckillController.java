@@ -24,9 +24,14 @@ public class SeckillController {
 
     private final SeckillOrderService seckillOrderService;
 
+    /**
+     * M4 起为异步排队模式：立即返回"排队中"（code=0），
+     * 前端轮询 GET /api/order/query?requestId= 获取最终下单结果。
+     */
     @PostMapping("/order")
-    public Result<Long> order(@Valid @RequestBody SeckillOrderDTO dto) {
-        return Result.ok(seckillOrderService.createOrder(dto));
+    public Result<Void> order(@Valid @RequestBody SeckillOrderDTO dto) {
+        seckillOrderService.createOrder(dto);
+        return Result.ok();
     }
 
     /** Redis 实时剩余库存（前端活动列表展示，-1 表示未预热） */

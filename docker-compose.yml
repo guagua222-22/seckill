@@ -38,6 +38,62 @@ services:
       timeout: 3s
       retries: 30
 
+  # RocketMQ 4.9.4（M4 起：异步下单的削峰缓冲）
+  # 选用 4.x 而非 5.x：5.1.4 镜像内置 Temurin 8u372，其 cgroup v2 检测
+  # 在 Docker Desktop WSL2 下 NPE → broker StoreUtil 静态初始化失败 → 消费端拉取全部报错。
+  # 4.9.4 镜像使用更早的 JDK 8，不含 cgroup v2 检测代码，无此问题。
+  # 4.x broker 走经典 remoting 协议，与 rocketmq-spring-boot-starter 2.3.2 完全兼容。
+  rocketmq-namesrv:
+    image: apache/rocketmq:4.9.4
+    container_name: seckill-rocketmq-namesrv
+    # 镜像默认以 rocketmq(uid 3000) 运行，写不了 root 属主的命名卷；
+    # 本机开发环境直接以 root 运行，否则日志/数据卷静默写失败
+    user: root
+    environment:
+      TZ: Asia/Shanghai
+      # 默认堆 4G+，本机必须调小，否则吃爆 WSL2 内存
+      JAVA_OPT_EXT: "-Xms256m -Xmx256m -Xmn128m"
+    command: sh mqnamesrv
+    ports:
+      - "9876:9876"
+    volumes:
+      - rocketmq-namesrv-data:/home/rocketmq/logs
+    healthcheck:
+      test: ["CMD-SHELL", "ps aux | grep -v grep | grep mqnamesrv || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+
+  rocketmq-broker:
+    image: apache/rocketmq:4.9.4
+    container_name: seckill-rocketmq-broker
+    # 同上：root 运行才能写 store 数据卷
+    user: root
+    depends_on:
+      rocketmq-namesrv:
+        condition: service_healthy
+    environment:
+      TZ: Asia/Shanghai
+      # 启动脚本按宿主机内存算堆和 MaxDirectMemorySize（本机≈2486m），
+      # JAVA_OPT_EXT 覆盖堆大小和直接内存上限，避免吃爆 WSL2 内存
+      JAVA_OPT_EXT: "-Xms512m -Xmx512m -Xmn256m -XX:MaxDirectMemorySize=256m"
+      NAMESRV_ADDR: rocketmq-namesrv:9876
+    command: sh mqbroker -c /home/rocketmq/broker.conf
+    ports:
+      - "10909:10909"
+      - "10911:10911"
+    volumes:
+      # broker.conf 挂载进容器（brokerIP1=127.0.0.1 等关键配置）
+      - ./rocketmq/broker.conf:/home/rocketmq/broker.conf
+      - rocketmq-broker-data:/home/rocketmq/store
+    healthcheck:
+      test: ["CMD-SHELL", "ps aux | grep -v grep | grep mqbroker || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+
 volumes:
   mysql-data:
   redis-data:
+  rocketmq-namesrv-data:
+  rocketmq-broker-data:

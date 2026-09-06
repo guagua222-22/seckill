@@ -44,3 +44,11 @@ management:
 seckill:
   seed:
     user-count: ${SEED_USER_COUNT:0}
+  mq:
+    topic: seckill-order-topic
+    consumer-group: seckill-order-consumer
+
+rocketmq:
+  name-server: localhost:9876
+  producer:
+    group: seckill-producer
