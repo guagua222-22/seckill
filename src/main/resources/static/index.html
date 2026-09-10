@@ -64,7 +64,8 @@
     <h2>3. 活动 · 列表 / 创建</h2>
     <div class="row">
       <input id="actName" placeholder="活动名称">
-      <input id="actGoodsId" placeholder="商品ID" type="number">
+      <!-- ID 类输入框一律用 text：19 位雪花 ID 超过 JS 安全整数范围，type=number 会在浏览器内丢精度 -->
+      <input id="actGoodsId" placeholder="商品ID" type="text" inputmode="numeric">
     </div>
     <div class="row">
       <input id="actPrice" placeholder="秒杀价" type="number" step="0.01">
@@ -80,8 +81,8 @@
   <div class="card">
     <h2>4. 秒杀 · 下单</h2>
     <div class="row">
-      <input id="skUserId" placeholder="用户ID" type="number">
-      <input id="skActivityId" placeholder="活动ID" type="number">
+      <input id="skUserId" placeholder="用户ID" type="text" inputmode="numeric">
+      <input id="skActivityId" placeholder="活动ID" type="text" inputmode="numeric">
     </div>
     <div class="row">
       <button class="red" onclick="seckill()">⚡ 抢购</button>
@@ -154,7 +155,9 @@ async function createActivity(mode) {
     const end = new Date(now.getTime() + 3600 * 1000 * 3);
     const fmt = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}T${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}:${String(d.getSeconds()).padStart(2,'0')}`;
     const r = await api('/api/goods/activity', 'POST', {
-      activityName: $('actName').value, goodsId: Number($('actGoodsId').value),
+      activityName: $('actName').value,
+      // goodsId 保持字符串原样发送：Number() 会先丢精度，后端 Jackson 自动转 Long
+      goodsId: $('actGoodsId').value,
       seckillPrice: Number($('actPrice').value), totalStock: Number($('actStock').value),
       startTime: fmt(start), endTime: fmt(end)
     });
@@ -168,7 +171,8 @@ async function seckill() {
     lastRequestId = crypto.randomUUID();
     $('lastRequest').textContent = `最近请求ID：${lastRequestId}`;
     const r = await api('/api/seckill/order', 'POST', {
-      userId: Number($('skUserId').value), activityId: Number($('skActivityId').value),
+      // ID 一律字符串原样发送，避免 Number() 丢精度
+      userId: $('skUserId').value, activityId: $('skActivityId').value,
       requestId: lastRequestId
     });
     log(`下单请求: ${JSON.stringify(r)}`, r.code !== 0);
