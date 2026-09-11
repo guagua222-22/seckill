@@ -1,0 +1,65 @@
+server:
+  port: 8083
+  tomcat:
+    threads:
+      max: 200
+    accept-count: 500
+
+spring:
+  application:
+    name: seckill-service
+  datasource:
+    url: jdbc:mysql://localhost:3307/seckill_seckill?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true&rewriteBatchedStatements=true
+    username: root
+    password: root123
+    hikari:
+      maximum-pool-size: 50
+      minimum-idle: 10
+      connection-timeout: 3000
+  data:
+    redis:
+      host: localhost
+      port: 6379
+      timeout: 3000ms
+  jackson:
+    # 与其余服务逐字一致：Feign 跨服务传输时间/Long 字段时两侧格式必须对称
+    time-zone: GMT+8
+    date-format: yyyy-MM-dd HH:mm:ss
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+  cloud:
+    nacos:
+      discovery:
+        server-addr: localhost:8848
+    openfeign:
+      client:
+        config:
+          default:
+            # 内网直连 1s 足够；Feign 默认不重试（Retryer.NEVER），
+            # 可靠性靠 requestId 幂等 + MQ 重投 + 对账兜底，绝不靠 Feign 重试
+            connect-timeout: 1000
+            read-timeout: 2000
+
+mybatis-plus:
+  configuration:
+    map-underscore-to-camel-case: true
+  global-config:
+    db-config:
+      id-type: assign_id
+
+seckill:
+  mq:
+    topic: seckill-order-topic
+    consumer-group: seckill-order-consumer
+
+rocketmq:
+  name-server: localhost:9876
+  producer:
+    group: seckill-producer
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
