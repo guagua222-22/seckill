@@ -80,8 +80,10 @@ services:
       NAMESRV_ADDR: rocketmq-namesrv:9876
     command: sh mqbroker -c /home/rocketmq/broker.conf
     ports:
-      - "10909:10909"
-      - "10911:10911"
+      # 10909/10911 落在 Windows WinNAT 保留段 10885-10984 内，重启 Docker 后绑定失败。
+      # broker 监听端口已在 broker.conf 改为 10996，VIP 端口映射到 10995（容器内仍 10909）
+      - "10995:10909"
+      - "10996:10996"
     volumes:
       # broker.conf 挂载进容器（brokerIP1=127.0.0.1 等关键配置）
       - ./rocketmq/broker.conf:/home/rocketmq/broker.conf
