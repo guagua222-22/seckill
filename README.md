@@ -1,121 +1,131 @@
 # 秒杀系统（seckill）
 
-生产级秒杀系统，微服务版技术栈（Spring Cloud Alibaba），按「先单体、后微服务」演进路线施工。
+生产级秒杀系统，微服务架构（Spring Cloud Alibaba）。按「先单体、后微服务」路线演进：M1-M4 以单体跑通核心链路，M5 完成微服务拆分。
 
 ## 当前阶段
 
-M4：RocketMQ 异步下单 + 本地消息表可靠投递（已完成，含全链路集成测试）
+M5：微服务拆分（已完成）——Nacos 注册中心 + Gateway 网关 + OpenFeign 跨服务调用 + 每服务独立数据库
+
+## 架构总览
+
+```
+                     ┌──────────────┐
+   浏览器 :8080 ────► │   Gateway    │──┬─ /api/user/** ───► user-service   :8081 ─► MySQL seckill_user
+   （验证台静态页）   │  (webflux)   │  ├─ /api/goods/** ──► goods-service  :8082 ─► MySQL seckill_goods
+                     └──────┬───────┘  └─ /api/seckill/** ─► seckill-service :8083 ─► MySQL seckill_seckill
+                            │              /api/order/**      （含订单域+前端页）
+                     ┌──────▼───────┐
+                     │ Nacos :8848  │  服务注册/发现；Feign 走 lb:// 直连（不经网关）
+                     └──────┬───────┘
+                     ┌──────▼───────────────────────────────────────┐
+                     │ Redis :6379（共享：Lua 预扣/活动缓存/预热契约）  │
+                     │ RocketMQ :9876（只有 seckill-service 用）      │
+                     └──────────────────────────────────────────────┘
+```
+
+| 模块 | 端口 | 数据库 | 职责 |
+|---|---|---|---|
+| seckill-common | - | - | 统一返回/错误码/异常/Jackson/MyBatis 配置/Feign 契约 DTO/Redis key 契约 |
+| seckill-gateway | 8080 | - | 统一入口：路由分发 + 前端静态页转发（webflux，禁引 common） |
+| seckill-user | 8081 | seckill_user | 注册/登录（BCrypt）+ 内部用户存在性接口 |
+| seckill-goods | 8082 | seckill_goods | 商品/活动 CRUD、缓存三件套、预热/对账、内部库存扣减（幂等流水） |
+| seckill-seckill | 8083 | seckill_seckill | Lua 预扣、MQ 异步落单、本地消息表、订单域、前端验证台 |
+
+**跨服务铁律**：只能走对方 service/controller 接口（Feign），禁止跨服务访问 mapper/数据库。
+内部接口前缀 `/internal`，网关不路由（外部不可达），Feign 走 `lb://` 直连。
 
 ## 快速启动
 
 ```bash
-# 1. 启动中间件（MySQL 8.0.36 + Redis 7.2.4 + RocketMQ 4.9.4 namesrv/broker）
+# 1. 启动中间件（MySQL 8.0.36 :3307 + Redis + RocketMQ 4.9.4 + Nacos 2.3.2）
 docker compose up -d
 
-# 2. 启动应用（JDK 21）
-./mvnw spring-boot:run
+# 2. 启动 4 个应用（各开一个终端，或 IDEA 里跑 4 个启动类）
+./mvnw -pl seckill-user spring-boot:run
+./mvnw -pl seckill-goods spring-boot:run
+./mvnw -pl seckill-seckill spring-boot:run
+./mvnw -pl seckill-gateway spring-boot:run
 
-# 3. 可选：灌入 10 万测试用户（用户名 test_1 ~ test_100000，密码统一 123456）
-SEED_USER_COUNT=100000 ./mvnw spring-boot:run
-
-# 4. 验证台前端：浏览器打开 http://localhost:8080/
-#    健康检查：curl http://localhost:8080/actuator/health
+# 3. 浏览器打开 http://localhost:8080/（验证台前端）
+#    Nacos 控制台 http://localhost:8848/nacos（查看服务注册）
+#    健康检查 curl http://localhost:8080/actuator/health
 ```
 
-## 已有接口
+> 首次拆分（从旧单体升级）需一次性执行建库与数据迁移，见 `scripts/db/`。
 
-| 接口 | 说明 |
-|---|---|
-| POST /api/user/register | 注册（BCrypt 加密，用户名唯一） |
-| POST /api/user/login | 登录 |
-| POST /api/goods | 创建商品（同步初始化 0 库存行） |
-| PUT /api/goods/{id} | 更新商品 |
-| GET /api/goods/{id} | 商品详情（含库存） |
-| GET /api/goods/page | 商品分页 |
-| POST /api/goods/activity | 创建秒杀活动（校验时间窗 + 灌入活动库存） |
-| GET /api/goods/activity/{id} | 活动详情 |
-| GET /api/goods/activity/page | 活动分页 |
-| POST /api/seckill/order | 秒杀下单（M4：Lua 预扣 → 本地消息表 → RocketMQ 异步落单，发送失败自动补偿重发） |
-| GET /api/seckill/stock/{activityId} | Redis 实时剩余库存（-1 表示未预热） |
-| GET /api/order/query?requestId= | 按请求ID查订单 |
+## 接口清单（全部经网关 8080）
 
-统一响应：`{"code":0,"message":"success","data":...}`；业务错误码见 `com.seckill.common.result.ErrorCode`。
-
-### 防超卖与防重复（M2/M3 核心）
-
-- 快闸门：Redis Lua 原子预扣（判断已购→判断库存→扣减→登记四步原子，返回码 1/-1/-2/-3）
-- DB 兜底：`UPDATE t_stock SET available_stock = available_stock - 1 WHERE goods_id = ? AND available_stock > 0`，影响 0 行即库存不足
-- 一人一单：`uk_user_activity` 唯一索引 + Lua SADD 判重 + DuplicateKeyException 兜底（事务回滚已扣库存）
-- 请求幂等：`uk_request_id` 唯一索引
-- 预扣回滚：DB 落单失败 → SREM 成功才 INCR 库存（幂等补偿）
-- 对账任务：每小时校验 Redis 剩余与 DB 库存，以 DB 为准回写并清理已结束活动 key
-
-### 缓存三件套（M3，商品详情）
-
-| 问题 | 方案 |
-|---|---|
-| 穿透 | Guava 布隆过滤器（一定不存在直接拒）+ 空值缓存 60s |
-| 击穿 | 逻辑过期 + SETNX 互斥重建（过期只放一个请求进 DB，其余返回旧值） |
-| 雪崩 | 物理 TTL 30min ± 随机 5min |
-
-库存字段刻意不进详情缓存，永远现查 t_stock。
-
-### 异步下单链路（M4）
-
-| 步骤 | 组件 | 说明 |
+| 接口 | 服务 | 说明 |
 |---|---|---|
-| 1. 入口闸门 | Redis Lua | 原子判重→判库存→预扣→登记，失败直接返回 |
-| 2. 本地消息表 | MySQL `t_local_message` | 与预扣在同一事务写入，状态 PENDING |
-| 3. MQ 发送 | RocketMQ `asyncSend` | 发送成功→消息状态改 SENT；失败→保持 PENDING |
-| 4. 消费落单 | `SeckillOrderConsumerListener` | 消费成功→订单入库 + 记录状态 DONE；失败→MQ 自动重试 16 次 |
-| 5. 补偿重发 | `MessageResendJob`（每 30s） | 扫描超时 PENDING 消息重新发送 |
-| 6. 对账清理 | `MessageReconcileJob`（每小时） | 已 SENT 但消费未确认的消息回查状态 |
+| POST /api/user/register | user | 注册（BCrypt，用户名唯一） |
+| POST /api/user/login | user | 登录 |
+| POST /api/goods | goods | 创建商品 |
+| GET /api/goods/{id} | goods | 商品详情（缓存三件套） |
+| GET /api/goods/page | goods | 商品分页 |
+| POST /api/goods/activity | goods | 创建秒杀活动（灌库存+预热） |
+| GET /api/goods/activity/page | goods | 活动分页 |
+| POST /api/seckill/order | seckill | 秒杀下单（Lua 预扣→本地消息表→MQ 异步落单） |
+| GET /api/seckill/stock/{activityId} | seckill | Redis 实时剩余库存 |
+| GET /api/order/query?requestId= | seckill | 按请求 ID 查单 |
 
-选用 RocketMQ 4.9.4 而非 5.x：5.1.4 镜像内置 JDK 8u372 的 cgroup v2 检测在 Docker Desktop WSL2 下 NPE，导致 broker `StoreUtil` 初始化失败、消费端拉取全部报错。4.9.4 使用更早的 JDK 8 无此问题，且经典 remoting 协议与 `rocketmq-spring-boot-starter:2.3.2` 完全兼容。
+统一响应 `{"code":0,"message":"success","data":...}`；错误码见 `seckill-common` 的 `ErrorCode`（跨服务原码透传）。
 
-### 压测结果
+## 核心链路与防超卖（M2-M4 沉淀，M5 跨服务化）
 
-**并发正确性（JMeter 5.6.3，1000 并发抢 100 库存）**：订单数=100、DB 库存 0/100、Redis 剩余=0、重复用户=0，**超卖=0**，错误率 0%。
+1. **快闸门**：Redis Lua 原子预扣（判重→判库存→扣减→登记，返回 1/-1/-2/-3）
+2. **可靠消息**：流水 + 本地消息表同事务落库 → asyncSend → 失败由 `MessageResendJob`（30s）补偿
+3. **消费幂等三层**：SETNX 去重（命中后查流水状态，排队中重入处理）→ Redisson 用户锁 → DB 唯一索引
+4. **跨库补偿**（M5 新增）：`t_stock_operation` 幂等流水——扣库存与流水同事务、requestId 唯一键，
+   Feign 重试/MQ 重投不重复扣减；先扣库存后插单，冲突同步补偿 + 对账兜底
+5. **对账任务**：`StockReconcileJob`（库存对账）、`RecordReconcileJob`（流水对账，含 DB 库存补偿）
+6. **降级**：Redis 整体不可用 → DB 同步直写（条件更新 + 唯一索引兜底）
 
-**吞吐对比（oha 1.16，同机测量）**：
+### 缓存三件套（goods-service，商品详情）
 
-| 路径 | QPS | 平均 RT |
-|---|---|---|
-| 商品详情（缓存命中） | **6122** | 32ms |
-| 商品分页（无缓存 DB 读参照） | 1234 | 161ms |
-| 秒杀接口（Lua 闸门拒绝路径） | **3159** | 94ms |
-
-> 注：JMeter 同机压测在 ~1000 QPS 处触到客户端自身瓶颈（M2/M3 两版同为 ~199-994/s），
-> 吞吐对比改用轻量工具 oha 测量；M2 版秒杀平均 RT 582ms → M3 版 104ms。
+穿透（Guava 布隆 + 空值缓存）/ 击穿（逻辑过期 + SETNX 互斥重建）/ 雪崩（TTL 30min ± 随机）。
+> 注：布隆为单实例本地版，多实例部署前须换 Redisson 分布式布隆（M6 与多实例压测一起做）。
 
 ## 数据库
 
-Flyway 管理，V1 建 7 张表：t_user / t_goods / t_stock / t_seckill_activity / t_order / t_seckill_record / t_local_message。
+三个库同实例（MySQL :3307），各服务 Flyway 各自管理建表：
 
-关键设计：
-- `t_order.uk_user_activity`（一人一单）与 `uk_request_id`（请求幂等）唯一索引
-- 库存独立成表 `t_stock`，与商品详情读写分离，避免行锁竞争
-- `t_local_message` 为 M4 的可靠消息预留
+| 库 | 表 |
+|---|---|
+| seckill_user | t_user |
+| seckill_goods | t_goods / t_stock / t_seckill_activity / t_stock_operation（幂等扣减流水） |
+| seckill_seckill | t_order / t_seckill_record / t_local_message |
+
+关键设计：`uk_user_activity`（一人一单）、`uk_request_id`（请求幂等）、`t_stock_operation.uk_request`（跨服务补偿幂等）、库存与商品分表（热点行隔离）。
+
+`scripts/db/`：`init-databases.sql`（建三库）、`migrate-data.sql`（旧 seckill 库数据一次性迁移，可重复执行）。
 
 ## 测试
 
 ```bash
-./mvnw test   # 39 个测试：单测 + Lua 脚本并发测试（200 线程抢 100 库存）+ Testcontainers 全链路集成测试（含 MQ 异步消费）
+./mvnw clean verify        # 全模块单测 + jacoco（e2e 默认排除）
+./mvnw -pl seckill-seckill -Pe2e test   # 全栈 e2e：100 并发抢 100 库存（需全套环境在跑）
 ```
 
-> 注意：
-> - Windows 下 Testcontainers 需要 Docker Desktop ≥ 4.44 且使用 testcontainers 2.x（本项目已锁定 2.0.5，兼容 Docker Desktop 29 的 docker_cli 管道）。
-> - Lua 脚本测试与集成测试直连本机 Redis 容器的 **db 15**（与开发库 db 0 隔离），需 docker compose 的 redis 在运行。
-> - 集成测试还需 docker compose 的 RocketMQ（namesrv + broker）在运行，测试用独立 topic/consumer-group 与开发环境隔离。
+- 单测：user 5 + goods 19 + seckill 33（Lua 并发脚本测试直连 Redis db15，需 redis 容器在跑）
+- e2e：JDK HttpClient 直连网关，走"网关→Nacos→服务→MQ→三库"真实路径；环境未起自动跳过
+- 覆盖率：三业务服务 service 层 LINE ≥ 60%
 
 ## 技术栈版本
 
 | 组件 | 版本 |
 |---|---|
-| Spring Boot | 3.2.5 |
-| JDK | 21 |
-| MyBatis-Plus | 3.5.7 |
-| Flyway | 9.22.3 |
+| Spring Boot / JDK | 3.2.5 / 21 |
+| Spring Cloud / Alibaba | 2023.0.2 / 2023.0.1.0（Nacos 2.3.2） |
+| MyBatis-Plus / Flyway | 3.5.7 / 9.22.3 |
 | MySQL / Redis | 8.0.36 / 7.2.4（docker） |
-| RocketMQ | 4.9.4（broker/namesrv）+ spring-boot-starter 2.3.2 |
-| Redisson | 3.32.0（分布式锁） |
+| RocketMQ | 4.9.4（broker）+ starter 2.3.2（client 钉 5.3.1） |
+| Redisson / Guava | 3.32.0 / 33.3.1-jre |
+
+### 环境踩坑记录
+
+- **RocketMQ 端口**：10909/10911 落在 Windows WinNAT 保留段 10885-10984，broker 监听端口改 10996（客户端经 namesrv 自动获取）
+- **RocketMQ client 版本**：SCA BOM 会把 rocketmq-client 压到 5.1.4（与 starter 2.3.2 不兼容），根 pom 显式钉 5.3.1
+- **Feign + loadbalancer**：SC 2023 必须显式引入 loadbalancer，否则 `lb://` 报 No LoadBalancerClient
+- **gateway 依赖纪律**：严禁引 starter-web/seckill-common（webflux 冲突启动即挂）
+- **Nacos**：9848 gRPC 端口必须映射；WSL2 内存预算内堆压到 256m
+- **跨服务时间/Long 对称**：三服务 `spring.jackson.*` 逐字一致 + common 共享 JacksonConfig

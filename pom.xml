@@ -27,7 +27,6 @@
     <module>seckill-goods</module>
     <module>seckill-seckill</module>
     <module>seckill-gateway</module>
-    <module>seckill-legacy</module>
   </modules>
 
   <properties>
@@ -41,7 +40,6 @@
     <rocketmq-starter.version>2.3.2</rocketmq-starter.version>
     <guava.version>33.3.1-jre</guava.version>
     <commons-lang3.version>3.17.0</commons-lang3.version>
-    <testcontainers.version>2.0.5</testcontainers.version>
     <!-- jacoco 覆盖率 include 规则由各模块自行设置；默认跳过（common/gateway 无测试） -->
     <jacoco.skip>true</jacoco.skip>
     <jacoco.includes>*</jacoco.includes>
@@ -111,13 +109,6 @@
         <groupId>org.apache.commons</groupId>
         <artifactId>commons-lang3</artifactId>
         <version>${commons-lang3.version}</version>
-      </dependency>
-      <dependency>
-        <groupId>org.testcontainers</groupId>
-        <artifactId>testcontainers-bom</artifactId>
-        <version>${testcontainers.version}</version>
-        <type>pom</type>
-        <scope>import</scope>
       </dependency>
     </dependencies>
   </dependencyManagement>
