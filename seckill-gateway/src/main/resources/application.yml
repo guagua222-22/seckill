@@ -1,0 +1,42 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: gateway-service
+  cloud:
+    nacos:
+      discovery:
+        server-addr: localhost:8848
+    gateway:
+      # 连接超时压到 1s：默认 45s 会让前端在服务不可用时长时间挂起
+      httpclient:
+        connect-timeout: 1000
+      routes:
+        # 用户域
+        - id: user-service
+          uri: lb://user-service
+          predicates:
+            - Path=/api/user/**
+        # 商品/活动域
+        - id: goods-service
+          uri: lb://goods-service
+          predicates:
+            - Path=/api/goods/**
+        # 秒杀域（order 域已并入 seckill-service）
+        - id: seckill-service
+          uri: lb://seckill-service
+          predicates:
+            - Path=/api/seckill/**, /api/order/**
+        # 前端验证台：单文件页由 seckill-service 承载
+        # 注意：/internal/** 故意不配路由——服务间内部端点外部不可达，Feign 走 lb:// 直连
+        - id: seckill-static
+          uri: lb://seckill-service
+          predicates:
+            - Path=/, /index.html
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
