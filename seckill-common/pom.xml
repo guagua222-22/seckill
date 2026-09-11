@@ -15,4 +15,33 @@
   <name>seckill-common</name>
   <description>公共层：统一返回/错误码/异常处理/Redis key 契约/Jackson 与 MyBatis 配置/Feign 契约 DTO</description>
 
+  <dependencies>
+    <!-- GlobalExceptionHandler / JacksonConfig 需要 spring-web 与 jackson；
+         注意引入的是 starter-web，但 gateway 严禁依赖本模块（webflux 冲突） -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-web</artifactId>
+    </dependency>
+    <!-- GlobalExceptionHandler 里需要捕获 DuplicateKeyException（org.springframework.dao） -->
+    <dependency>
+      <groupId>org.springframework</groupId>
+      <artifactId>spring-tx</artifactId>
+    </dependency>
+    <!-- MybatisPlusConfig 分页拦截器 -->
+    <dependency>
+      <groupId>com.baomidou</groupId>
+      <artifactId>mybatis-plus-spring-boot3-starter</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.projectlombok</groupId>
+      <artifactId>lombok</artifactId>
+      <optional>true</optional>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-test</artifactId>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>
+
 </project>
