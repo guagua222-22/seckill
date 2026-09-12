@@ -59,6 +59,9 @@ docker compose up -d
 # 3. 浏览器打开 http://localhost:8080/（验证台前端）
 #    Nacos 控制台 http://localhost:8848/nacos（查看服务注册）
 #    健康检查 curl http://localhost:8080/actuator/health
+
+# 4.（可选）Sentinel 控制台：看实时 QPS / 被拦数量 / 熔断状态，不起也不影响限流
+bash scripts/sentinel-dashboard.sh --bg     # http://localhost:8858 ，账号密码都是 sentinel
 ```
 
 > 首次拆分（从旧单体升级）需一次性执行建库与数据迁移，见 `scripts/db/`。
@@ -114,6 +117,44 @@ docker compose up -d
 埋点统一走 `SentinelGuard.call(资源名, 被限流时抛的错误码, 业务动作, 热点参数...)`：被限流快速失败成业务码，
 **业务异常原样透传且不计入熔断统计**——否则「库存不足」「已抢过」这类正常业务拒绝会把依赖误判成故障，
 把熔断器打开。这条语义有专门单测守着。
+
+### Sentinel 控制台（只读观测）
+
+控制台不是必需的中间件，**没起也不影响任何限流/熔断行为**（规则在代码里，不靠控制台下发）。
+要看实时 QPS、被拦数量、熔断状态时再起：
+
+```bash
+bash scripts/sentinel-dashboard.sh          # 前台，Ctrl+C 停
+bash scripts/sentinel-dashboard.sh --bg     # 后台，日志 /tmp/sentinel-dashboard.log
+```
+
+打开 http://localhost:8858 ，账号密码都是 `sentinel`。
+
+- **为什么不做成容器**：被监控的 4 个应用跑在宿主机，Sentinel 客户端会在宿主机开 8719+ 的
+  CommandCenter 端口，控制台需要反向连回来。装进容器就多一层 Docker Desktop 网络不确定性，收益为零。
+- **为什么 jar 不进仓库**：22MB 且不在 Maven Central（阿里云镜像 404），只能从 GitHub Releases 取。
+  按本机工具惯例放 `C:\Soft_Common\sentinel-dashboard\`，脚本里钉了 sha256 校验，缺失时打印下载命令。
+- **端口自动递增**：CommandCenter 默认 8719，被占就 +1。同时起 4 个应用时网关拿 8719、seckill 拿 8720，
+  控制台按 app 名区分，不必手工配 `transport.port`。
+- **没流量就看不到资源**：Sentinel 的资源树是懒建的，`eager: true` 只保证启动即上报心跳
+  （应用出现在左侧列表），资源要等第一个请求进来才有。压测时开着看最直观。
+
+> **踩过的坑（时序 bug，值得单独记）**：`SentinelRuleConfig` 最初用 `@PostConstruct` 加载规则，
+> 结果控制台里永远只有网关、没有 seckill-service。根因是初始化顺序：yml 里的
+> `spring.cloud.sentinel.transport.dashboard` 要靠 SCA 自动配置的 `@PostConstruct` 搬进
+> `csp.sentinel.dashboard.server` 系统属性，而**自动配置 Bean 排在用户 Bean 之后实例化**——
+> 我的 `@PostConstruct` 抢先把 Sentinel 核心类初始化了，`SimpleHttpHeartbeatSender` 构造时读到的是
+> **空的控制台地址列表，而这个列表终身不再重读**，于是该 JVM 一个心跳都不发。客户端日志里只有一行
+> `WARNING [SimpleHttpHeartbeatSender] Dashboard server address not configured or not available`，
+> 而 CommandCenter 照常监听、手动调 `/registry/machine` 注册后指标也全对——所以极易误判成控制台的问题。
+> 同一根因还有个副作用：app 名退回成主类名，metrics 日志被写成
+> `com-seckill-seckill-SeckillServiceApplication-metrics.log` 而不是 `seckill-service-metrics.log`。
+>
+> 修法是改用 `SmartInitializingSingleton.afterSingletonsInstantiated()`：它在**所有单例的
+> `@PostConstruct` 之后**、**Web 容器开始收流量之前**触发，两个条件正好都满足。网关侧同样改掉——
+> 它当时只是侥幸没踩中（`GatewayRuleManager` 没把 Sentinel 核心类拖起来），但隐患一模一样。
+> 排查入口：`C:\Users\<you>\logs\csp\sentinel-record.log.<日期>.*`，
+> 对比正常与异常实例的 `App name resolved from ...` 一行即可定位。
 
 ### 热点隔离：多级缓存
 
@@ -231,3 +272,5 @@ node scripts/loadtest/load.mjs --mode detail --base http://localhost:8080 --good
 - **Redisson `tryInit` 参数只写一次**：`goods:bloom:ids` 已存在时改 `expected-insertions`/`false-probability` 不生效，必须先 `DEL` 再重启
 - **Windows GBK 控制台毁中文请求体**：`curl -d '{"name":"中文"}'` 会被编码搞坏，服务端报 400「请求体格式错误」。JSON 用 UTF-8 写进文件再 `--data-binary @file`，并显式带 `charset=UTF-8`
 - **运行中的 JVM 锁 jar**：Windows 下服务在跑时 `mvn package` 覆盖 `target/*.jar` 会失败。但 IDEA 里的服务是从 `target/classes` 起的，改完代码重启即生效，不必打包
+- **Sentinel 规则加载禁用 `@PostConstruct`**：会抢在 SCA 自动配置写入 `csp.sentinel.dashboard.server` 之前初始化 Sentinel 核心，心跳发送器读到空地址列表且终身不重读 → 控制台永远看不到该服务。必须用 `SmartInitializingSingleton.afterSingletonsInstantiated()`，详见「稳定性防线（M6）· Sentinel 控制台」
+- **Sentinel 控制台 jar 不在 Maven Central**：阿里云镜像 404，只能从 GitHub Releases 取（22MB）。放 `C:\Soft_Common\sentinel-dashboard\`，由 `scripts/sentinel-dashboard.sh` 校验 sha256 后启动；jar 不进仓库

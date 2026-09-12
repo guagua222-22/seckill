@@ -33,7 +33,7 @@ class SentinelRuleConfigTest {
         ReflectionTestUtils.setField(config, "hotActivityQps", hotQps);
         ReflectionTestUtils.setField(config, "degradeExceptionRatio", 0.5);
         ReflectionTestUtils.setField(config, "degradeWindowSeconds", 10);
-        config.loadRules();
+        config.afterSingletonsInstantiated();
     }
 
     @Test

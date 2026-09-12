@@ -5,8 +5,8 @@ import com.alibaba.csp.sentinel.adapter.gateway.common.rule.GatewayRuleManager;
 import com.alibaba.csp.sentinel.adapter.gateway.sc.SentinelGatewayFilter;
 import com.alibaba.csp.sentinel.adapter.gateway.sc.callback.GatewayCallbackManager;
 import com.alibaba.csp.sentinel.adapter.gateway.sc.exception.SentinelGatewayBlockExceptionHandler;
-import jakarta.annotation.PostConstruct;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.SmartInitializingSingleton;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -34,16 +34,25 @@ import java.util.Set;
  *
  * 规则资源名 = 路由 id（GatewayFlowRule 默认按 route 维度统计），
  * 被拒绝时返回与业务同构的 JSON（code=429），前端验证台能直接读懂。
+ *
+ * 为什么用 SmartInitializingSingleton 而不是 @PostConstruct：
+ * yml 里的 spring.cloud.sentinel.transport.dashboard 是靠 SCA 自动配置的 @PostConstruct
+ * 搬进 csp.sentinel.dashboard.server 系统属性的，而自动配置 Bean 排在用户 Bean 之后实例化。
+ * 在这里用 @PostConstruct 就有抢跑风险——一旦先把 Sentinel 核心类初始化了，
+ * 心跳发送器会读到空的控制台地址列表并且终身不再重读，控制台里就永远看不到这个服务
+ * （seckill-service 已经踩过，症状是控制台只有网关没有业务服务，且客户端日志里
+ * 只有一行 WARNING: Dashboard server address not configured or not available）。
+ * afterSingletonsInstantiated() 在所有单例的 @PostConstruct 之后、Web 容器接收流量之前触发。
  */
 @Configuration
-public class SentinelGatewayConfig {
+public class SentinelGatewayConfig implements SmartInitializingSingleton {
 
     /** 秒杀路由的入口 QPS 上限：比服务内总闸（2000×实例数）略高，只挡异常洪峰 */
     @Value("${gateway.sentinel.seckill-route-qps:5000}")
     private long seckillRouteQps;
 
-    @PostConstruct
-    public void init() {
+    @Override
+    public void afterSingletonsInstantiated() {
         GatewayFlowRule seckillRoute = new GatewayFlowRule("seckill-service");
         seckillRoute.setCount(seckillRouteQps);
         seckillRoute.setIntervalSec(1);

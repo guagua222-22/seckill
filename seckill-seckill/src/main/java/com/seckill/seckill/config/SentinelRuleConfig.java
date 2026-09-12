@@ -7,7 +7,7 @@ import com.alibaba.csp.sentinel.slots.block.flow.FlowRule;
 import com.alibaba.csp.sentinel.slots.block.flow.FlowRuleManager;
 import com.alibaba.csp.sentinel.slots.block.flow.param.ParamFlowRule;
 import com.alibaba.csp.sentinel.slots.block.flow.param.ParamFlowRuleManager;
-import jakarta.annotation.PostConstruct;
+import org.springframework.beans.factory.SmartInitializingSingleton;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Configuration;
 
@@ -20,6 +20,16 @@ import java.util.List;
  * 规则是和容量一起演进的"工程常量"（压测得出阈值后改代码走评审），
  * 放控制台容易被随手改坏且无法单测；控制台只承担"看实时 QPS/熔断状态"的职责。
  *
+ * 为什么用 SmartInitializingSingleton 而不是 @PostConstruct：
+ * spring.cloud.sentinel.transport.dashboard 这个 yml 配置，是靠 SCA 的
+ * SentinelAutoConfiguration.init()（也是 @PostConstruct）搬进 csp.sentinel.dashboard.server
+ * 系统属性的；而自动配置 Bean 一定排在用户 Bean 之后实例化。
+ * 所以这里若用 @PostConstruct，就会抢在 SCA 之前把 Sentinel 核心类初始化掉——
+ * 心跳发送器的控制台地址列表在构造时就定死了，读到的是空列表，
+ * 于是这个 JVM 整个生命周期都不会向控制台发心跳（控制台里永远看不到本服务）。
+ * afterSingletonsInstantiated() 在"所有单例的 @PostConstruct 都跑完"之后、
+ * "Web 容器开始接收流量"之前触发，两个条件正好都满足。
+ *
  * 三类规则各挡一件事：
  * 1. FlowRule（QPS 流控）：下单入口总闸门，保护 DB/MQ 不被瞬时流量打穿；
  * 2. ParamFlowRule（热点参数限流）：按 activityId 分别计数，单个热点活动的流量
@@ -28,7 +38,7 @@ import java.util.List;
  *    熔断期间快速失败返回 503，避免调用方线程被慢依赖拖死（雪崩防线）。
  */
 @Configuration
-public class SentinelRuleConfig {
+public class SentinelRuleConfig implements SmartInitializingSingleton {
 
     /** 下单入口资源名：QPS 流控 + 热点参数限流都挂在它上面 */
     public static final String RES_CREATE_ORDER = "seckill:createOrder";
@@ -53,8 +63,8 @@ public class SentinelRuleConfig {
     @Value("${seckill.sentinel.degrade-window-seconds:10}")
     private int degradeWindowSeconds;
 
-    @PostConstruct
-    public void loadRules() {
+    @Override
+    public void afterSingletonsInstantiated() {
         FlowRule flow = new FlowRule(RES_CREATE_ORDER);
         flow.setGrade(RuleConstant.FLOW_GRADE_QPS);
         flow.setCount(orderQps);
