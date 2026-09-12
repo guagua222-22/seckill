@@ -1,0 +1,4 @@
+# bash 脚本必须保持 LF：本机 core.autocrlf=true，检出时会把行尾换成 CRLF，
+# 而 Git Bash 执行 CRLF 脚本会报 `$'\r': command not found`（shebang 也会被 \r 污染）。
+# 其余文本文件（.java/.yml/.sql/.mjs/.md）交给 autocrlf 处理即可，CRLF 对它们无害。
+*.sh text eol=lf
