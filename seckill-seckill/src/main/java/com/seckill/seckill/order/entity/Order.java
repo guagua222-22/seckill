@@ -28,7 +28,13 @@ public class Order {
 
     private Long userId;
 
+    /** 用户名快照(反范式冗余)：下单时从 user-service 取回存下，避免跨库 join，也方便直接看数据表 */
+    private String username;
+
     private Long activityId;
+
+    /** 活动名快照(反范式冗余)：同理，避免跨库 join 才能看出这是哪场秒杀 */
+    private String activityName;
 
     private Long goodsId;
 

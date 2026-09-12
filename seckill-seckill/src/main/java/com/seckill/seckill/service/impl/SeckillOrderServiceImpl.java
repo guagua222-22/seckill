@@ -96,17 +96,21 @@ public class SeckillOrderServiceImpl implements SeckillOrderService {
         if (now.isAfter(activity.getEndTime())) {
             throw new BizException(ErrorCode.ACTIVITY_ENDED);
         }
-        // 用户存在性校验：原 UserMapper 直连，拆分后 Feign 调 user-service
-        if (!Boolean.TRUE.equals(FeignResultUtils.unwrap(userClient.userExists(dto.getUserId())))) {
+        // 用户校验 + 用户名快照：一次 Feign 同时完成"是否存在"与"取回用户名"。
+        // 取回的用户名会沿链路透传到消息体、流水表、订单表（反范式冗余），
+        // 这样在 Navicat 里看 seckill_seckill 库的数据表就能直接知道是谁下的单，
+        // 不必再去 seckill_user 库按 id 对照——微服务拆库后跨库 join 本来就做不到。
+        String username = FeignResultUtils.unwrap(userClient.username(dto.getUserId()));
+        if (username == null) {
             throw new BizException(ErrorCode.USER_NOT_FOUND);
         }
 
         try {
-            doSeckill(dto, activity);
+            doSeckill(dto, activity, username);
         } catch (DataAccessException e) {
             // 3. Redis 故障降级：同步直写，保证可用性与不超卖
             log.error("Redis 不可用，降级 DB 直写: {}", e.getMessage());
-            dbOrderWriter.writeOrder(dto, activity, loadGoodsName(activity));
+            dbOrderWriter.writeOrder(dto, activity, loadGoodsName(activity), username);
         }
     }
 
@@ -116,8 +120,8 @@ public class SeckillOrderServiceImpl implements SeckillOrderService {
         return value == null ? -1 : Integer.parseInt(value);
     }
 
-    /** Lua 预扣 → 落流水消息 → 异步发送 */
-    private void doSeckill(SeckillOrderDTO dto, ActivityInfoDTO activity) {
+    /** Lua 预扣 → 落流水消息 → 异步发送（username 为入口已取得的用户名快照） */
+    private void doSeckill(SeckillOrderDTO dto, ActivityInfoDTO activity, String username) {
         Long result = executePreDeduct(dto.getUserId(), activity.getId());
         if (result == null) {
             throw new BizException(ErrorCode.INTERNAL_ERROR);
@@ -132,9 +136,9 @@ public class SeckillOrderServiceImpl implements SeckillOrderService {
                 // MessageResendJob 兜底重发，此时绝不能回滚预扣（订单仍会生成）。
                 SeckillMessage message;
                 try {
-                    message = buildMessage(dto, activity);
-                    recordMessageWriter.write(dto.getRequestId(), dto.getUserId(),
-                            dto.getActivityId(), topic, toJson(message));
+                    message = buildMessage(dto, activity, username);
+                    recordMessageWriter.write(dto.getRequestId(), dto.getUserId(), username,
+                            dto.getActivityId(), activity.getActivityName(), topic, toJson(message));
                 } catch (DuplicateKeyException e) {
                     // 并发下同一 requestId 撞唯一索引：视为重复提交，回滚本次预扣
                     rollbackPreDeduct(dto.getUserId(), activity.getId());
@@ -158,9 +162,9 @@ public class SeckillOrderServiceImpl implements SeckillOrderService {
                     // 与 case 1 相同的回滚保护（buildMessage 在 try 内，asyncSend 在 try 外）
                     SeckillMessage message;
                     try {
-                        message = buildMessage(dto, activity);
-                        recordMessageWriter.write(dto.getRequestId(), dto.getUserId(),
-                                dto.getActivityId(), topic, toJson(message));
+                        message = buildMessage(dto, activity, username);
+                        recordMessageWriter.write(dto.getRequestId(), dto.getUserId(), username,
+                                dto.getActivityId(), activity.getActivityName(), topic, toJson(message));
                     } catch (DuplicateKeyException e) {
                         rollbackPreDeduct(dto.getUserId(), activity.getId());
                         throw new BizException(ErrorCode.ALREADY_ORDERED, "排队中，请勿重复提交");
@@ -198,12 +202,14 @@ public class SeckillOrderServiceImpl implements SeckillOrderService {
         });
     }
 
-    /** 组装消息体：商品名/成交价快照，消费端无需再查商品库 */
-    private SeckillMessage buildMessage(SeckillOrderDTO dto, ActivityInfoDTO activity) {
+    /** 组装消息体：用户名/商品名/成交价快照，消费端无需再查用户库与商品库 */
+    private SeckillMessage buildMessage(SeckillOrderDTO dto, ActivityInfoDTO activity, String username) {
         SeckillMessage message = new SeckillMessage();
         message.setRequestId(dto.getRequestId());
         message.setUserId(dto.getUserId());
+        message.setUsername(username);
         message.setActivityId(dto.getActivityId());
+        message.setActivityName(activity.getActivityName());
         message.setGoodsId(activity.getGoodsId());
         message.setGoodsName(loadGoodsName(activity));
         message.setPrice(activity.getSeckillPrice());

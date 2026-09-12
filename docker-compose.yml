@@ -5,7 +5,8 @@ services:
     environment:
       TZ: Asia/Shanghai
       MYSQL_ROOT_PASSWORD: root123
-      MYSQL_DATABASE: seckill
+      # 注意：这里不再自动建库。业务库 seckill_user / seckill_goods / seckill_seckill
+      # 由 scripts/db/init-databases.sql 手动创建（微服务各自独立库，见 README 首次搭建章节）
     ports:
       - "3307:3306"
     volumes:

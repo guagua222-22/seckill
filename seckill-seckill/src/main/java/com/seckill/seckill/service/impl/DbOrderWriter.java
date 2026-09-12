@@ -47,9 +47,10 @@ public class DbOrderWriter {
     /**
      * @param goodsName 商品名快照，由调用方传入：消费端从消息快照取，降级路径从 Feign 取，
      *                  避免本类每单多一次 Feign 调用
+     * @param username  用户名快照，同样由调用方传入（入口 Feign 已取回，消息里也带着）
      */
     @Transactional
-    public Long writeOrder(SeckillOrderDTO dto, ActivityInfoDTO activity, String goodsName) {
+    public Long writeOrder(SeckillOrderDTO dto, ActivityInfoDTO activity, String goodsName, String username) {
         // 1. 一人一单预检：命中直接返回，避免无效扣库存
         //（Redis 正常路径由 Lua 判重，这里是降级路径与并发窗口兜底）
         Long ordered = orderMapper.selectCount(new LambdaQueryWrapper<Order>()
@@ -68,7 +69,9 @@ public class DbOrderWriter {
         Order order = new Order();
         order.setOrderNo(IdWorker.getIdStr());
         order.setUserId(dto.getUserId());
+        order.setUsername(username == null ? "" : username);
         order.setActivityId(dto.getActivityId());
+        order.setActivityName(activity.getActivityName() == null ? "" : activity.getActivityName());
         order.setGoodsId(activity.getGoodsId());
         order.setGoodsName(goodsName == null ? "" : goodsName);
         order.setPrice(activity.getSeckillPrice());

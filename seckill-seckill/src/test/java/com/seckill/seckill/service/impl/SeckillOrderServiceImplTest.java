@@ -89,6 +89,7 @@ class SeckillOrderServiceImplTest {
     void setUp() {
         activity = new ActivityInfoDTO();
         activity.setId(100L);
+        activity.setActivityName("测试活动");
         activity.setGoodsId(1L);
         activity.setSeckillPrice(new BigDecimal("9.90"));
         activity.setStartTime(LocalDateTime.now().minusHours(1));
@@ -99,7 +100,8 @@ class SeckillOrderServiceImplTest {
         // Feign 兜底返回活动信息（Redis miss 场景）
         when(goodsClient.activity(100L)).thenReturn(Result.ok(activity));
         when(goodsClient.goodsName(1L)).thenReturn(Result.ok("测试商品"));
-        when(userClient.userExists(1L)).thenReturn(Result.ok(true));
+        // 用户名接口同时承担"存在性校验 + 用户名快照"两个职责
+        when(userClient.username(1L)).thenReturn(Result.ok("test_1"));
         when(recordMapper.selectOne(any())).thenReturn(null); // 幂等快路径默认未命中
         ReflectionTestUtils.setField(seckillOrderService, "topic", "seckill-order-topic");
     }
@@ -160,7 +162,8 @@ class SeckillOrderServiceImplTest {
 
         assertDoesNotThrow(() -> seckillOrderService.createOrder(dto()));
 
-        verify(recordMessageWriter).write(eq("req-1"), eq(1L), eq(100L), anyString(), anyString());
+        verify(recordMessageWriter).write(eq("req-1"), eq(1L), eq("test_1"),
+                eq(100L), eq("测试活动"), anyString(), anyString());
         // asyncSend 有多个重载，显式 any(Object.class) 匹配 (String, Object, SendCallback) 重载
         verify(rocketMQTemplate).asyncSend(anyString(), any(Object.class),
                 any(org.apache.rocketmq.client.producer.SendCallback.class));
@@ -171,7 +174,7 @@ class SeckillOrderServiceImplTest {
     void writeDuplicateKeyRollback() {
         when(redis.execute(any(DefaultRedisScript.class), anyList(), any(Object[].class))).thenReturn(1L);
         org.mockito.Mockito.doThrow(new DuplicateKeyException("uk_request"))
-                .when(recordMessageWriter).write(anyString(), any(), any(), anyString(), anyString());
+                .when(recordMessageWriter).write(anyString(), any(), any(), any(), any(), anyString(), anyString());
 
         BizException e = assertThrows(BizException.class, () -> seckillOrderService.createOrder(dto()));
         assertEquals(ErrorCode.ALREADY_ORDERED.getCode(), e.getCode());
@@ -185,7 +188,7 @@ class SeckillOrderServiceImplTest {
                 .thenThrow(new RedisSystemException("connection refused", new RuntimeException()));
 
         assertDoesNotThrow(() -> seckillOrderService.createOrder(dto()));
-        verify(dbOrderWriter).writeOrder(any(), any(), anyString());
+        verify(dbOrderWriter).writeOrder(any(), any(), anyString(), eq("test_1"));
     }
 
     @Test
@@ -199,9 +202,9 @@ class SeckillOrderServiceImplTest {
     }
 
     @Test
-    @DisplayName("用户不存在：Feign 校验失败直接拒绝")
+    @DisplayName("用户不存在：Feign 返回 null 用户名直接拒绝")
     void userNotFound() {
-        when(userClient.userExists(1L)).thenReturn(Result.ok(false));
+        when(userClient.username(1L)).thenReturn(Result.<String>ok(null));
         BizException e = assertThrows(BizException.class, () -> seckillOrderService.createOrder(dto()));
         assertEquals(ErrorCode.USER_NOT_FOUND.getCode(), e.getCode());
         verify(redis, never()).execute(any(DefaultRedisScript.class), anyList(), any(Object[].class));
@@ -231,7 +234,7 @@ class SeckillOrderServiceImplTest {
         // 关键断言：预扣必须回滚（实验2 的幽灵扣减就是这一步缺失导致的）
         verify(stockRollback).rollback(1L, 100L);
         // 且流水/消息都没写、MQ 没发——"要么排队成功，要么完全没发生"
-        verify(recordMessageWriter, never()).write(anyString(), any(), any(), anyString(), anyString());
+        verify(recordMessageWriter, never()).write(anyString(), any(), any(), any(), any(), anyString(), anyString());
         verify(rocketMQTemplate, never()).asyncSend(anyString(), any(Object.class),
                 any(org.apache.rocketmq.client.producer.SendCallback.class));
     }

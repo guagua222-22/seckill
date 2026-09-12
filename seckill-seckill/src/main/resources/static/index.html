@@ -13,25 +13,34 @@
   .card { background: #fff; border-radius: 10px; padding: 18px; box-shadow: 0 1px 4px rgba(0,0,0,.06); }
   .card h2 { font-size: 15px; margin-bottom: 12px; padding-bottom: 8px; border-bottom: 1px solid #ecf0f1; }
   .row { display: flex; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; }
-  input, select { flex: 1; min-width: 120px; padding: 8px 10px; border: 1px solid #dcdde1; border-radius: 6px; font-size: 13px; }
-  input:focus { outline: none; border-color: #3498db; }
+  input, select { flex: 1; min-width: 120px; padding: 8px 10px; border: 1px solid #dcdde1; border-radius: 6px; font-size: 13px; background: #fff; }
+  input:focus, select:focus { outline: none; border-color: #3498db; }
   button { padding: 8px 16px; border: none; border-radius: 6px; background: #3498db; color: #fff; font-size: 13px; cursor: pointer; }
   button:hover { background: #2980b9; }
   button.gray { background: #95a5a6; }
   button.green { background: #27ae60; }
   button.red { background: #e74c3c; }
+  button.mini { padding: 4px 10px; font-size: 12px; }
   .log { background: #2c3e50; color: #2ecc71; font-family: Consolas, monospace; font-size: 12px; padding: 10px; border-radius: 6px; min-height: 80px; max-height: 220px; overflow-y: auto; white-space: pre-wrap; word-break: break-all; }
   .log .err { color: #e74c3c; }
   table { width: 100%; border-collapse: collapse; font-size: 12px; }
   th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid #ecf0f1; }
   th { color: #7f8c8d; font-weight: 600; }
+  tbody tr:hover { background: #f8f9fb; }
+  .scroll { max-height: 240px; overflow-y: auto; }
   .tip { font-size: 12px; color: #95a5a6; margin-top: 6px; }
   .full { grid-column: 1 / -1; }
+  .head-flex { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; padding-bottom: 8px; border-bottom: 1px solid #ecf0f1; }
+  .head-flex h2 { font-size: 15px; margin: 0; padding: 0; border: none; }
+  .tag { display: inline-block; padding: 1px 6px; border-radius: 4px; font-size: 11px; background: #ecf0f1; color: #7f8c8d; }
+  .tag.on { background: #d4efdf; color: #27ae60; }
+  .tag.off { background: #fadbd8; color: #e74c3c; }
+  .mono { font-family: Consolas, monospace; }
 </style>
 </head>
 <body>
 <h1>秒杀系统 · 验证台</h1>
-<div class="sub">后端接口验证页面（M2）· 应用地址即本页地址</div>
+<div class="sub">微服务链路验证页（M5）· 请求经网关 8080 转发到 user / goods / seckill 三个服务</div>
 
 <div class="grid">
 
@@ -50,18 +59,35 @@
   </div>
 
   <div class="card">
-    <h2>2. 商品 · 列表 / 创建</h2>
+    <div class="head-flex">
+      <h2>2. 用户列表</h2>
+      <button class="gray mini" onclick="loadUsers()">刷新</button>
+    </div>
+    <div class="scroll">
+      <table id="userTable">
+        <thead><tr><th>ID</th><th>用户名</th><th>昵称</th><th>创建时间</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+    <div class="tip">数据源 user-service：<span class="mono">GET /api/user/page</span> · 点一行可把它选进第 5 步的抢购下拉框</div>
+  </div>
+
+  <div class="card">
+    <h2>3. 商品 · 列表 / 创建</h2>
     <div class="row">
       <input id="goodsName" placeholder="商品名称">
       <input id="goodsPrice" placeholder="日常价" type="number" step="0.01">
       <button class="green" onclick="createGoods()">创建商品</button>
     </div>
-    <table id="goodsTable"><thead><tr><th>ID</th><th>名称</th><th>价格</th><th>库存</th></tr></thead><tbody></tbody></table>
-    <div class="tip">库存列 = 可用/总量（创建活动时自动灌入）</div>
+    <table id="goodsTable"><thead><tr><th>ID</th><th>名称</th><th>价格</th></tr></thead><tbody></tbody></table>
+    <div class="tip">活动库存在第 4 步的"Redis剩余"列看（创建活动时才灌入库存表）</div>
   </div>
 
   <div class="card">
-    <h2>3. 活动 · 列表 / 创建</h2>
+    <div class="head-flex">
+      <h2>4. 活动 · 列表 / 创建</h2>
+      <button class="gray mini" onclick="loadActivities()">刷新</button>
+    </div>
     <div class="row">
       <input id="actName" placeholder="活动名称">
       <!-- ID 类输入框一律用 text：19 位雪花 ID 超过 JS 安全整数范围，type=number 会在浏览器内丢精度 -->
@@ -75,32 +101,67 @@
       <button class="green" onclick="createActivity('now')">创建并立即开始</button>
       <button class="gray" onclick="createActivity('future')">创建（1小时后开始）</button>
     </div>
-    <table id="actTable"><thead><tr><th>ID</th><th>名称</th><th>总量</th><th>Redis剩余</th><th>状态</th></tr></thead><tbody></tbody></table>
+    <div class="scroll">
+      <table id="actTable">
+        <thead><tr><th>ID</th><th>名称</th><th>总量</th><th>Redis剩余</th><th>状态</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
   </div>
 
   <div class="card">
-    <h2>4. 秒杀 · 下单</h2>
+    <h2>5. 秒杀 · 下单</h2>
     <div class="row">
-      <input id="skUserId" placeholder="用户ID" type="text" inputmode="numeric">
-      <input id="skActivityId" placeholder="活动ID" type="text" inputmode="numeric">
+      <!-- 下拉框取代手输 ID：value 是完整雪花 ID 字符串（后端 Long 统一序列化成字符串，不会丢精度） -->
+      <select id="skUserId"><option value="">选择用户…</option></select>
+      <select id="skActivityId"><option value="">选择活动…</option></select>
     </div>
     <div class="row">
       <button class="red" onclick="seckill()">⚡ 抢购</button>
       <button class="gray" onclick="queryOrder()">按请求ID查单</button>
     </div>
     <div class="tip" id="lastRequest">最近请求ID：-</div>
+    <div class="tip">抢购走 seckill-service：Lua 预扣 → 本地消息表 → RocketMQ 异步落单，入口秒回"排队中"</div>
   </div>
 
   <div class="card full">
-    <h2>5. 操作日志</h2>
+    <div class="head-flex">
+      <h2>6. 订单快照列表（最近 20 条）</h2>
+      <button class="gray mini" onclick="loadOrders()">刷新</button>
+    </div>
+    <table id="orderTable">
+      <thead>
+        <tr><th>订单号</th><th>用户</th><th>活动</th><th>商品</th><th>成交价</th><th>状态</th><th>创建时间</th><th>请求ID</th></tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+    <div class="tip">
+      用户/活动/商品三列都是下单时写入的<b>快照字段</b>（反范式冗余）：拆库后订单库里没有用户表和活动表，
+      靠这些冗余列就能一眼看懂订单，不需要跨库 join——这也是 Navicat 里看 <span class="mono">t_order</span> 不再有"光秃秃 ID"的原因。
+    </div>
+  </div>
+
+  <div class="card full">
+    <h2>7. 操作日志</h2>
     <div class="log" id="log">等待操作…</div>
   </div>
 </div>
 
 <script>
-const B = ''; // 同源
+const B = ''; // 同源（页面由 seckill-service 承载，经网关访问时同样同源）
 let lastRequestId = '';
 const $ = id => document.getElementById(id);
+
+/** HTML 转义：用户名/商品名等都是用户输入，直接拼进 innerHTML 会被当脚本执行 */
+function esc(v) {
+  return String(v ?? '').replace(/[&<>"']/g, c =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+/** 时间字符串裁剪：后端返回 2026-09-12T10:20:30，表格只显示到秒 */
+function fmtTime(t) {
+  return t ? String(t).replace('T', ' ').slice(0, 19) : '-';
+}
 
 function log(msg, isErr) {
   const el = $('log');
@@ -124,7 +185,11 @@ async function register() {
       username: $('regName').value, password: $('regPwd').value, nickname: $('regNick').value
     });
     log(`注册: ${JSON.stringify(r)}`, r.code !== 0);
-    if (r.code === 0) { $('userInfo').textContent = `已登录: ${r.data.username} (id=${r.data.id})`; $('skUserId').value = r.data.id; }
+    if (r.code === 0) {
+      $('userInfo').textContent = `已登录: ${r.data.username} (id=${r.data.id})`;
+      await loadUsers();
+      $('skUserId').value = r.data.id; // 注册完直接选中，省一次点击
+    }
   } catch (e) { log('注册请求失败: ' + e, true); }
 }
 
@@ -134,7 +199,11 @@ async function login() {
       username: $('regName').value, password: $('regPwd').value
     });
     log(`登录: ${JSON.stringify(r)}`, r.code !== 0);
-    if (r.code === 0) { $('userInfo').textContent = `已登录: ${r.data.username} (id=${r.data.id})`; $('skUserId').value = r.data.id; }
+    if (r.code === 0) {
+      $('userInfo').textContent = `已登录: ${r.data.username} (id=${r.data.id})`;
+      await loadUsers();
+      $('skUserId').value = r.data.id;
+    }
   } catch (e) { log('登录请求失败: ' + e, true); }
 }
 
@@ -162,18 +231,24 @@ async function createActivity(mode) {
       startTime: fmt(start), endTime: fmt(end)
     });
     log(`创建活动: ${JSON.stringify(r)}`, r.code !== 0);
-    if (r.code === 0) { $('skActivityId').value = r.data.id; loadActivities(); loadGoods(); }
+    if (r.code === 0) {
+      await loadActivities();
+      $('skActivityId').value = r.data.id; // 新建的活动默认选中
+      loadGoods();
+    }
   } catch (e) { log('创建活动失败: ' + e, true); }
 }
 
 async function seckill() {
+  const userId = $('skUserId').value;
+  const activityId = $('skActivityId').value;
+  if (!userId || !activityId) { log('请先在第 5 步选择用户和活动', true); return; }
   try {
     lastRequestId = crypto.randomUUID();
     $('lastRequest').textContent = `最近请求ID：${lastRequestId}`;
     const r = await api('/api/seckill/order', 'POST', {
       // ID 一律字符串原样发送，避免 Number() 丢精度
-      userId: $('skUserId').value, activityId: $('skActivityId').value,
-      requestId: lastRequestId
+      userId, activityId, requestId: lastRequestId
     });
     log(`下单请求: ${JSON.stringify(r)}`, r.code !== 0);
     if (r.code === 0) {
@@ -191,46 +266,117 @@ async function seckill() {
         if (o.code !== 3001) { log(`查单: ${JSON.stringify(o)}`, true); done = true; break; }
       }
       if (!done) log('6 秒内未查到订单，可稍后点"按请求ID查单"再查');
-      loadGoods(); loadActivities();
+      loadOrders(); loadGoods(); loadActivities();
     }
   } catch (e) { log('下单失败: ' + e, true); }
 }
 
 async function queryOrder() {
   try {
-    const r = await api(`/api/order/query?requestId=${encodeURIComponent(lastRequestId || $('lastRequest').value)}`, 'GET');
+    const r = await api(`/api/order/query?requestId=${encodeURIComponent(lastRequestId)}`, 'GET');
     log(`查单: ${JSON.stringify(r)}`, r.code !== 0);
   } catch (e) { log('查单失败: ' + e, true); }
 }
 
+/** 用户列表 + 抢购用户下拉框（同一次请求喂两个地方，避免重复调接口） */
+async function loadUsers() {
+  try {
+    const r = await api('/api/user/page?page=1&size=50', 'GET');
+    const users = r.data?.records || [];
+    const tb = $('userTable').querySelector('tbody');
+    const sel = $('skUserId');
+    const keep = sel.value; // 刷新前选中的用户，刷新后尽量保持
+    tb.innerHTML = '';
+    sel.innerHTML = '<option value="">选择用户…</option>';
+    users.forEach(u => {
+      tb.innerHTML += `<tr style="cursor:pointer" title="点击选中该用户" onclick="pickUser('${esc(u.id)}')">
+        <td class="mono">${esc(u.id)}</td><td>${esc(u.username)}</td>
+        <td>${esc(u.nickname || '-')}</td><td>${fmtTime(u.createTime)}</td></tr>`;
+      // 下拉框只显示用户名 + ID 末 6 位：19 位完整 ID 会把框撑得太宽
+      sel.innerHTML += `<option value="${esc(u.id)}">${esc(u.username)} · ${esc(String(u.id).slice(-6))}</option>`;
+    });
+    if (keep) sel.value = keep;
+  } catch (e) { log('加载用户列表失败: ' + e, true); }
+}
+
+function pickUser(id) {
+  $('skUserId').value = id;
+  log(`已选择用户 id=${id}`);
+}
+
 async function loadGoods() {
-  const r = await api('/api/goods/page?page=1&size=20', 'GET');
-  const tb = $('goodsTable').querySelector('tbody');
-  tb.innerHTML = '';
-  (r.data?.records || []).forEach(g => {
-    // 库存字段在分页接口里没有，详情接口才有；简单展示
-    tb.innerHTML += `<tr><td>${g.id}</td><td>${g.goodsName}</td><td>${g.normalPrice}</td><td>-</td></tr>`;
-  });
+  try {
+    const r = await api('/api/goods/page?page=1&size=20', 'GET');
+    const tb = $('goodsTable').querySelector('tbody');
+    tb.innerHTML = '';
+    (r.data?.records || []).forEach(g => {
+      tb.innerHTML += `<tr style="cursor:pointer" title="点击填入活动商品ID" onclick="pickGoods('${esc(g.id)}')">
+        <td class="mono">${esc(g.id)}</td><td>${esc(g.goodsName)}</td><td>${esc(g.normalPrice)}</td></tr>`;
+    });
+  } catch (e) { log('加载商品列表失败: ' + e, true); }
 }
 
+function pickGoods(id) {
+  $('actGoodsId').value = id;
+  log(`已填入商品ID=${id}`);
+}
+
+/** 活动列表 + 抢购活动下拉框：下拉框里直接标出状态与 Redis 剩余库存，避免抢到已结束的活动 */
 async function loadActivities() {
-  const r = await api('/api/goods/activity/page?page=1&size=20', 'GET');
-  const tb = $('actTable').querySelector('tbody');
-  tb.innerHTML = '';
-  for (const a of (r.data?.records || [])) {
-    const status = a.status === 0 ? '未开始' : a.status === 1 ? '进行中' : '已结束';
-    tb.innerHTML += `<tr id="act-${a.id}"><td>${a.id}</td><td>${a.activityName}</td><td>${a.totalStock}</td><td class="stock">...</td><td>${status}</td></tr>`;
-    // 逐个拉取 Redis 实时剩余库存（M3 新接口）
-    const s = await api(`/api/seckill/stock/${a.id}`, 'GET');
-    const cell = document.querySelector(`#act-${a.id} .stock`);
-    if (cell) cell.textContent = (s.code === 0) ? (s.data === -1 ? '未预热' : s.data) : '-';
-  }
+  try {
+    const r = await api('/api/goods/activity/page?page=1&size=20', 'GET');
+    const acts = r.data?.records || [];
+    const tb = $('actTable').querySelector('tbody');
+    const sel = $('skActivityId');
+    const keep = sel.value;
+    tb.innerHTML = '';
+    sel.innerHTML = '<option value="">选择活动…</option>';
+    for (const a of acts) {
+      const statusText = a.status === 0 ? '未开始' : a.status === 1 ? '进行中' : '已结束';
+      // 逐个拉取 Redis 实时剩余库存（M3 接口）；-1 表示还没预热到 Redis
+      const s = await api(`/api/seckill/stock/${a.id}`, 'GET');
+      const stock = (s.code === 0) ? (s.data === -1 ? '未预热' : s.data) : '-';
+      const cls = a.status === 1 ? 'on' : 'off';
+      tb.innerHTML += `<tr><td class="mono">${esc(a.id)}</td><td>${esc(a.activityName)}</td>
+        <td>${esc(a.totalStock)}</td><td>${esc(stock)}</td><td><span class="tag ${cls}">${statusText}</span></td></tr>`;
+      sel.innerHTML += `<option value="${esc(a.id)}">${esc(a.activityName)} · ${statusText} · 剩${esc(stock)}</option>`;
+    }
+    if (keep) sel.value = keep;
+  } catch (e) { log('加载活动列表失败: ' + e, true); }
 }
 
+/** 订单快照列表：GET /api/order/list，按创建时间倒序 */
+async function loadOrders() {
+  try {
+    const r = await api('/api/order/list?limit=20', 'GET');
+    const tb = $('orderTable').querySelector('tbody');
+    tb.innerHTML = '';
+    const orders = r.data || [];
+    if (!orders.length) {
+      tb.innerHTML = '<tr><td colspan="8" style="color:#95a5a6">暂无订单，去第 5 步抢一单试试</td></tr>';
+      return;
+    }
+    orders.forEach(o => {
+      const st = o.status === 0 ? '待支付' : o.status === 1 ? '已支付' : '已取消';
+      tb.innerHTML += `<tr>
+        <td class="mono">${esc(o.orderNo)}</td>
+        <td>${esc(o.username || '-')}<span class="tag mono" style="margin-left:4px">${esc(String(o.userId).slice(-6))}</span></td>
+        <td>${esc(o.activityName || '-')}</td>
+        <td>${esc(o.goodsName || '-')}</td>
+        <td>${esc(o.price)}</td>
+        <td><span class="tag ${o.status === 2 ? 'off' : 'on'}">${st}</span></td>
+        <td>${fmtTime(o.createTime)}</td>
+        <td class="mono" title="${esc(o.requestId)}">${esc(String(o.requestId).slice(0, 8))}…</td>
+      </tr>`;
+    });
+  } catch (e) { log('加载订单列表失败: ' + e, true); }
+}
+
+loadUsers();
 loadGoods();
 loadActivities();
-$('skUserId').value = 1; // 默认 test_1
-log('验证台就绪。提示：先在第2步创建商品 → 第3步创建活动（立即开始）→ 第4步抢购。');
+loadOrders();
+log('验证台就绪。提示：第3步创建商品（点商品行可填入活动）→ 第4步创建活动（立即开始）→ 第5步选用户+选活动抢购 → 第6步看订单快照。');
 </script>
 </body>
 </html>

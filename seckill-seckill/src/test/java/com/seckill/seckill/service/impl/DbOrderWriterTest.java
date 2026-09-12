@@ -70,6 +70,7 @@ class DbOrderWriterTest {
 
         activity = new ActivityInfoDTO();
         activity.setId(100L);
+        activity.setActivityName("测试活动");
         activity.setGoodsId(10L);
         activity.setSeckillPrice(new BigDecimal("9.90"));
     }
@@ -80,7 +81,7 @@ class DbOrderWriterTest {
         when(orderMapper.selectCount(any(Wrapper.class))).thenReturn(1L);
 
         BizException e = assertThrows(BizException.class,
-                () -> dbOrderWriter.writeOrder(dto, activity, "iPhone"));
+                () -> dbOrderWriter.writeOrder(dto, activity, "iPhone", "test_1"));
         assertEquals(ErrorCode.ALREADY_ORDERED.getCode(), e.getCode());
         verify(goodsClient, never()).deductStock(any(DeductStockRequest.class));
     }
@@ -93,7 +94,7 @@ class DbOrderWriterTest {
                 .thenReturn(Result.fail(ErrorCode.STOCK_NOT_ENOUGH));
 
         BizException e = assertThrows(BizException.class,
-                () -> dbOrderWriter.writeOrder(dto, activity, "iPhone"));
+                () -> dbOrderWriter.writeOrder(dto, activity, "iPhone", "test_1"));
         assertEquals(ErrorCode.STOCK_NOT_ENOUGH.getCode(), e.getCode());
         verify(orderMapper, never()).insert(any(Order.class));
     }
@@ -104,7 +105,7 @@ class DbOrderWriterTest {
         when(orderMapper.selectCount(any(Wrapper.class))).thenReturn(0L);
         when(goodsClient.deductStock(any(DeductStockRequest.class))).thenReturn(Result.ok());
 
-        dbOrderWriter.writeOrder(dto, activity, "iPhone");
+        dbOrderWriter.writeOrder(dto, activity, "iPhone", "test_1");
 
         verify(goodsClient).deductStock(any(DeductStockRequest.class));
         // mock 的 insert 不会回填雪花 ID，用参数捕获断言落单内容
@@ -113,7 +114,9 @@ class DbOrderWriterTest {
         Order order = captor.getValue();
         assertEquals("req-1", order.getRequestId());
         assertEquals(1L, order.getUserId());
+        assertEquals("test_1", order.getUsername());
         assertEquals(100L, order.getActivityId());
+        assertEquals("测试活动", order.getActivityName());
         assertEquals("iPhone", order.getGoodsName());
         assertEquals(new BigDecimal("9.90"), order.getPrice());
         verify(goodsClient, never()).rollbackStock(any(RollbackStockRequest.class));
@@ -128,7 +131,7 @@ class DbOrderWriterTest {
         when(goodsClient.rollbackStock(any(RollbackStockRequest.class))).thenReturn(Result.ok());
 
         BizException e = assertThrows(BizException.class,
-                () -> dbOrderWriter.writeOrder(dto, activity, "iPhone"));
+                () -> dbOrderWriter.writeOrder(dto, activity, "iPhone", "test_1"));
         assertEquals(ErrorCode.ALREADY_ORDERED.getCode(), e.getCode());
         // 关键断言：唯一键冲突后必须补偿回滚 DB 库存
         verify(goodsClient).rollbackStock(any(RollbackStockRequest.class));
@@ -144,7 +147,7 @@ class DbOrderWriterTest {
                 .thenThrow(new RuntimeException("goods-service down"));
 
         BizException e = assertThrows(BizException.class,
-                () -> dbOrderWriter.writeOrder(dto, activity, "iPhone"));
+                () -> dbOrderWriter.writeOrder(dto, activity, "iPhone", "test_1"));
         assertEquals(ErrorCode.ALREADY_ORDERED.getCode(), e.getCode());
     }
 }

@@ -14,8 +14,8 @@ import org.springframework.web.bind.annotation.RestController;
  * 用户域内部接口（供 seckill-service 的 Feign 调用，网关不路由 /internal/**）。
  *
  * 设计约定：跨服务只走对方的 service/controller 接口，禁止跨服务访问 mapper——
- * 本控制器是 user 域对外的唯一"数据出口"，seckill-service 的用户存在性校验
- * 只能通过 GET /internal/user/{id}/exists 完成。
+ * 本控制器是 user 域对外的唯一"数据出口"，seckill-service 的用户校验与用户名快照
+ * 只能通过这里的内部端点完成。
  */
 @RestController
 @RequestMapping("/internal/user")
@@ -24,11 +24,14 @@ public class InternalUserController {
 
     private final UserMapper userMapper;
 
-    /** 用户存在性校验：seckill 下单链路用，Feign 直连不经网关 */
-    @GetMapping("/{id}/exists")
-    public Result<Boolean> exists(@PathVariable Long id) {
-        boolean exists = userMapper.selectOne(
-                new LambdaQueryWrapper<User>().eq(User::getId, id)) != null;
-        return Result.ok(exists);
+    /**
+     * 用户名查询：seckill 下单链路用——一次调用同时完成
+     * "存在性校验（data 为 null 即不存在）+ 取用户名快照（订单/流水冗余字段）"。
+     */
+    @GetMapping("/{id}/username")
+    public Result<String> username(@PathVariable Long id) {
+        User user = userMapper.selectOne(
+                new LambdaQueryWrapper<User>().eq(User::getId, id));
+        return Result.ok(user == null ? null : user.getUsername());
     }
 }

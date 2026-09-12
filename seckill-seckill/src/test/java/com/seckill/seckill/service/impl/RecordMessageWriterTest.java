@@ -30,16 +30,19 @@ class RecordMessageWriterTest {
     private RecordMessageWriter writer;
 
     @Test
-    @DisplayName("写入：流水（排队中）与本地消息（待发送）同时落库")
+    @DisplayName("写入：流水（排队中）与本地消息（待发送）同时落库，含用户名/活动名快照")
     void writeBoth() {
-        writer.write("req-1", 1L, 100L, "seckill-order-topic", "{\"requestId\":\"req-1\"}");
+        writer.write("req-1", 1L, "test_1", 100L, "测试活动",
+                "seckill-order-topic", "{\"requestId\":\"req-1\"}");
 
         ArgumentCaptor<SeckillRecord> recordCaptor = ArgumentCaptor.forClass(SeckillRecord.class);
         verify(recordMapper).insert(recordCaptor.capture());
         SeckillRecord record = recordCaptor.getValue();
         assertEquals("req-1", record.getRequestId());
         assertEquals(1L, record.getUserId());
+        assertEquals("test_1", record.getUsername());
         assertEquals(100L, record.getActivityId());
+        assertEquals("测试活动", record.getActivityName());
         assertEquals(0, record.getStatus()); // 0 = 已预扣（排队中）
 
         ArgumentCaptor<LocalMessage> messageCaptor = ArgumentCaptor.forClass(LocalMessage.class);
@@ -49,5 +52,16 @@ class RecordMessageWriterTest {
         assertEquals("seckill-order-topic", message.getTopic());
         assertEquals(0, message.getStatus()); // 0 = 待发送
         assertEquals(0, message.getRetryCount());
+    }
+
+    @Test
+    @DisplayName("快照为 null 时降级空串：NOT NULL DEFAULT '' 的列不能插入 null")
+    void writeNullSnapshotFallbackToEmpty() {
+        writer.write("req-2", 1L, null, 100L, null, "seckill-order-topic", "{}");
+
+        ArgumentCaptor<SeckillRecord> captor = ArgumentCaptor.forClass(SeckillRecord.class);
+        verify(recordMapper).insert(captor.capture());
+        assertEquals("", captor.getValue().getUsername());
+        assertEquals("", captor.getValue().getActivityName());
     }
 }

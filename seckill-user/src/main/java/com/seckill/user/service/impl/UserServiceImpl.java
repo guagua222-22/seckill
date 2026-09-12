@@ -1,6 +1,7 @@
 package com.seckill.user.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.seckill.common.exception.BizException;
 import com.seckill.common.result.ErrorCode;
 import com.seckill.user.dto.LoginDTO;
@@ -56,6 +57,16 @@ public class UserServiceImpl implements UserService {
             throw new BizException(ErrorCode.PASSWORD_ERROR);
         }
         return toVO(user);
+    }
+
+    @Override
+    public Page<UserVO> page(int page, int size) {
+        // 新用户排前面，验证台下拉框默认选到最新注册的用户
+        Page<User> userPage = userMapper.selectPage(new Page<>(page, size),
+                new LambdaQueryWrapper<User>().orderByDesc(User::getCreateTime));
+        Page<UserVO> voPage = new Page<>(userPage.getCurrent(), userPage.getSize(), userPage.getTotal());
+        voPage.setRecords(userPage.getRecords().stream().map(this::toVO).toList());
+        return voPage;
     }
 
     private UserVO toVO(User user) {

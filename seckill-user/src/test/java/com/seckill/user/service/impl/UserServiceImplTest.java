@@ -125,4 +125,25 @@ class UserServiceImplTest {
         BizException e = assertThrows(BizException.class, () -> userService.login(dto));
         assertEquals(ErrorCode.PASSWORD_ERROR.getCode(), e.getCode());
     }
+
+    @Test
+    @DisplayName("用户分页：返回 VO 列表（验证台下拉框数据源）")
+    void pageReturnsVoList() {
+        User user = new User();
+        user.setId(1L);
+        user.setUsername("alice");
+        user.setPassword("hash-not-exposed");
+        user.setNickname("Alice");
+        com.baomidou.mybatisplus.extension.plugins.pagination.Page<User> userPage =
+                new com.baomidou.mybatisplus.extension.plugins.pagination.Page<>(1, 20, 1);
+        userPage.setRecords(java.util.List.of(user));
+        when(userMapper.selectPage(any(), any())).thenReturn(userPage);
+
+        com.baomidou.mybatisplus.extension.plugins.pagination.Page<UserVO> result = userService.page(1, 20);
+
+        assertEquals(1, result.getTotal());
+        assertEquals("alice", result.getRecords().get(0).getUsername());
+        // VO 不携带密码字段，天然脱敏
+        assertNotNull(result.getRecords().get(0).getUsername());
+    }
 }

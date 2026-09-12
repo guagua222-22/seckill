@@ -81,7 +81,7 @@ public class SeckillOrderConsumerService {
             // 3. DB 落单（Feign 扣库存 + 本地插订单，唯一索引双兜底）
             SeckillOrderDTO dto = toDto(message);
             ActivityInfoDTO activity = toActivity(message);
-            dbOrderWriter.writeOrder(dto, activity, message.getGoodsName());
+            dbOrderWriter.writeOrder(dto, activity, message.getGoodsName(), message.getUsername());
             // 4. 流水推进到"已下单"
             updateRecordStatus(message.getRequestId(), 1);
         } catch (InterruptedException e) {
@@ -125,10 +125,11 @@ public class SeckillOrderConsumerService {
         return dto;
     }
 
-    /** 从消息体还原活动关键字段（落单只需要 goodsId 与成交价） */
+    /** 从消息体还原活动关键字段（落单需要 goodsId、活动名与成交价快照） */
     private ActivityInfoDTO toActivity(SeckillMessage message) {
         ActivityInfoDTO activity = new ActivityInfoDTO();
         activity.setId(message.getActivityId());
+        activity.setActivityName(message.getActivityName());
         activity.setGoodsId(message.getGoodsId());
         activity.setSeckillPrice(message.getPrice());
         return activity;

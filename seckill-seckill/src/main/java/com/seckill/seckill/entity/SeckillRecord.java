@@ -25,7 +25,13 @@ public class SeckillRecord {
 
     private Long userId;
 
+    /** 用户名快照(反范式冗余)：与订单表同理，避免跨库 join，数据表可直接阅读 */
+    private String username;
+
     private Long activityId;
+
+    /** 活动名快照(反范式冗余)：预扣时记录活动名称，方便对账和查表 */
+    private String activityName;
 
     /** 0 已预扣（排队中）/ 1 已下单 / 2 已回滚 */
     private Integer status;

@@ -17,7 +17,13 @@ public class SeckillMessage {
 
     private Long userId;
 
+    /** 用户名快照：下单入口已 Feign 取回，消费端直接落库，不必再跨服务回查 */
+    private String username;
+
     private Long activityId;
+
+    /** 活动名快照：同上，消费端落订单时直接写入 t_order.activity_name */
+    private String activityName;
 
     private Long goodsId;
 

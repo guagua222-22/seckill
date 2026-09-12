@@ -82,7 +82,9 @@ class SeckillOrderConsumerServiceTest {
         message = new SeckillMessage();
         message.setRequestId("req-1");
         message.setUserId(1L);
+        message.setUsername("test_1");
         message.setActivityId(100L);
+        message.setActivityName("测试活动");
         message.setGoodsId(1L);
         message.setGoodsName("iPhone");
         message.setPrice(new BigDecimal("9.90"));
@@ -103,7 +105,7 @@ class SeckillOrderConsumerServiceTest {
         when(recordMapper.selectOne(any(Wrapper.class))).thenReturn(record);
 
         assertDoesNotThrow(() -> consumerService.process(message));
-        verify(dbOrderWriter, never()).writeOrder(any(), any(), any());
+        verify(dbOrderWriter, never()).writeOrder(any(), any(), any(), any());
         verify(lock, never()).tryLock(3, 10, TimeUnit.SECONDS);
     }
 
@@ -114,17 +116,17 @@ class SeckillOrderConsumerServiceTest {
         SeckillRecord record = new SeckillRecord();
         record.setStatus(0); // 排队中 = 上次处理中断（如补偿失败后 MQ 重投）
         when(recordMapper.selectOne(any(Wrapper.class))).thenReturn(record);
-        when(dbOrderWriter.writeOrder(any(), any(), anyString())).thenReturn(123L);
+        when(dbOrderWriter.writeOrder(any(), any(), anyString(), anyString())).thenReturn(123L);
 
         assertDoesNotThrow(() -> consumerService.process(message));
         // 关键断言：重入后正常走落单，而不是被 SETNX 永久挡住
-        verify(dbOrderWriter).writeOrder(any(), any(), any());
+        verify(dbOrderWriter).writeOrder(any(), any(), any(), any());
     }
 
     @Test
     @DisplayName("落单成功：流水推进到已下单")
     void successFlow() {
-        when(dbOrderWriter.writeOrder(any(), any(), anyString())).thenReturn(123L);
+        when(dbOrderWriter.writeOrder(any(), any(), anyString(), anyString())).thenReturn(123L);
         assertDoesNotThrow(() -> consumerService.process(message));
         verify(recordMapper).update(isNull(), any(Wrapper.class)); // 状态置 1
         verify(lock).unlock();
@@ -133,7 +135,7 @@ class SeckillOrderConsumerServiceTest {
     @Test
     @DisplayName("已下单（幂等成功）：状态对齐，不抛异常")
     void alreadyOrderedIdempotent() {
-        when(dbOrderWriter.writeOrder(any(), any(), anyString()))
+        when(dbOrderWriter.writeOrder(any(), any(), anyString(), anyString()))
                 .thenThrow(new BizException(ErrorCode.ALREADY_ORDERED));
         assertDoesNotThrow(() -> consumerService.process(message));
         verify(recordMapper).update(isNull(), any(Wrapper.class));
@@ -142,7 +144,7 @@ class SeckillOrderConsumerServiceTest {
     @Test
     @DisplayName("库存不足：回滚预扣 + 补偿 DB 库存 + 流水置已回滚，不抛异常")
     void stockNotEnoughRollback() {
-        when(dbOrderWriter.writeOrder(any(), any(), anyString()))
+        when(dbOrderWriter.writeOrder(any(), any(), anyString(), anyString()))
                 .thenThrow(new BizException(ErrorCode.STOCK_NOT_ENOUGH));
         when(goodsClient.rollbackStock(any())).thenReturn(Result.ok());
 
@@ -157,6 +159,6 @@ class SeckillOrderConsumerServiceTest {
     void lockTimeoutRetry() throws InterruptedException {
         when(lock.tryLock(3, 10, TimeUnit.SECONDS)).thenReturn(false);
         assertThrows(RuntimeException.class, () -> consumerService.process(message));
-        verify(dbOrderWriter, never()).writeOrder(any(), any(), anyString());
+        verify(dbOrderWriter, never()).writeOrder(any(), any(), anyString(), anyString());
     }
 }

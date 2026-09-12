@@ -26,18 +26,23 @@ public class RecordMessageWriter {
     private final LocalMessageMapper messageMapper;
 
     /**
-     * @param requestId 幂等键
-     * @param userId    用户
-     * @param activityId 活动
-     * @param topic     MQ 主题
-     * @param body      消息体 JSON
+     * @param requestId    幂等键
+     * @param userId       用户
+     * @param username     用户名快照（反范式冗余，避免跨库 join）
+     * @param activityId   活动
+     * @param activityName 活动名快照（反范式冗余）
+     * @param topic        MQ 主题
+     * @param body         消息体 JSON
      */
     @Transactional
-    public void write(String requestId, Long userId, Long activityId, String topic, String body) {
+    public void write(String requestId, Long userId, String username,
+                      Long activityId, String activityName, String topic, String body) {
         SeckillRecord record = new SeckillRecord();
         record.setRequestId(requestId);
         record.setUserId(userId);
+        record.setUsername(username == null ? "" : username);
         record.setActivityId(activityId);
+        record.setActivityName(activityName == null ? "" : activityName);
         record.setStatus(0); // 0 = 已预扣（排队中）
         recordMapper.insert(record);
 

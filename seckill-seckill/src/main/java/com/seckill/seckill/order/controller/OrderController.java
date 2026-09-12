@@ -9,6 +9,8 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.List;
+
 /**
  * 订单查询接口。
  * 查单按 requestId 而不是 orderId：前端下单拿到的是 requestId，
@@ -24,5 +26,11 @@ public class OrderController {
     @GetMapping("/query")
     public Result<Order> query(@RequestParam String requestId) {
         return Result.ok(orderService.getByRequestId(requestId));
+    }
+
+    /** 最近订单快照列表：验证页展示用，字段含用户名/活动名/商品名冗余快照，零跨库 join */
+    @GetMapping("/list")
+    public Result<List<Order>> list(@RequestParam(defaultValue = "20") int limit) {
+        return Result.ok(orderService.listRecent(limit));
     }
 }
