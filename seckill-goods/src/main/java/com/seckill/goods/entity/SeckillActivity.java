@@ -24,6 +24,9 @@ public class SeckillActivity {
 
     private Long goodsId;
 
+    /** 商品名快照(反范式)：配置行语义，商品改名时同步刷新，看活动表不必回 t_goods 对照 */
+    private String goodsName;
+
     /** 秒杀价（低于日常价） */
     private BigDecimal seckillPrice;
 

@@ -44,11 +44,14 @@ public class ActivityPreheatServiceImpl implements ActivityPreheatService {
 
         // 2. 活动信息：每次预热都刷新（时间窗可能有调整），TTL 到活动结束后 1 小时自动回收
         //    这里是 goods 与 seckill 之间的共享 Redis 契约（对端反序列化成 ActivityInfoDTO）：
-        //    activityName 必须带上——seckill 下单走缓存热路径时要靠它写订单/流水的活动名快照
+        //    activityName / goodsName 两个名字快照都必须带上——seckill 下单走缓存热路径时
+        //    要靠它们写订单、流水、MQ 消息的冗余列；缺字段对端只会拿到 null（踩过坑），
+        //    带上 goodsName 还能省掉每单一次"Feign 回查商品名"的跨服务调用
         Map<String, Object> info = new LinkedHashMap<>();
         info.put("id", activity.getId());
         info.put("activityName", activity.getActivityName());
         info.put("goodsId", activity.getGoodsId());
+        info.put("goodsName", activity.getGoodsName());
         info.put("seckillPrice", activity.getSeckillPrice());
         info.put("startTime", activity.getStartTime().toString());
         info.put("endTime", activity.getEndTime().toString());

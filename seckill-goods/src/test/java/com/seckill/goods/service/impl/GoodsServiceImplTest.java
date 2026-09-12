@@ -1,17 +1,24 @@
 package com.seckill.goods.service.impl;
 
+import com.baomidou.mybatisplus.core.MybatisConfiguration;
 import com.baomidou.mybatisplus.core.conditions.Wrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
+import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.seckill.common.exception.BizException;
 import com.seckill.common.result.ErrorCode;
 import com.seckill.goods.cache.GoodsBloomFilter;
 import com.seckill.goods.dto.GoodsDTO;
 import com.seckill.goods.entity.Goods;
+import com.seckill.goods.entity.SeckillActivity;
 import com.seckill.goods.entity.Stock;
 import com.seckill.goods.mapper.GoodsMapper;
+import com.seckill.goods.mapper.SeckillActivityMapper;
 import com.seckill.goods.mapper.StockMapper;
 import com.seckill.goods.vo.CachedGoodsVO;
 import com.seckill.goods.vo.GoodsDetailVO;
+import org.apache.ibatis.builder.MapperBuilderAssistant;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -30,9 +37,11 @@ import java.time.LocalDateTime;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -46,10 +55,25 @@ import static org.mockito.Mockito.when;
 @MockitoSettings(strictness = Strictness.LENIENT)
 class GoodsServiceImplTest {
 
+    /**
+     * 纯 Mockito 环境没有 Spring 启动流程，MyBatis-Plus 的 lambda 列缓存不会初始化，
+     * LambdaUpdateWrapper.set(实体::字段) 会抛"can not find lambda cache"。
+     * update() 现在要同步刷新 t_stock / t_seckill_activity 的 goods_name 冗余列，
+     * 所以这两个实体的 TableInfo 都得手动建好。
+     */
+    @BeforeAll
+    static void initLambdaCache() {
+        MapperBuilderAssistant assistant = new MapperBuilderAssistant(new MybatisConfiguration(), "");
+        TableInfoHelper.initTableInfo(assistant, Stock.class);
+        TableInfoHelper.initTableInfo(assistant, SeckillActivity.class);
+    }
+
     @Mock
     private GoodsMapper goodsMapper;
     @Mock
     private StockMapper stockMapper;
+    @Mock
+    private SeckillActivityMapper activityMapper;
     @Mock
     private StringRedisTemplate redis;
     @Mock
@@ -68,7 +92,8 @@ class GoodsServiceImplTest {
     @BeforeEach
     void setUp() {
         // 手动构造被测对象：Redis 等外部依赖用 mock，ObjectMapper 用真实实例
-        goodsService = new GoodsServiceImpl(goodsMapper, stockMapper, redis, objectMapper, bloomFilter);
+        goodsService = new GoodsServiceImpl(goodsMapper, stockMapper, activityMapper,
+                redis, objectMapper, bloomFilter);
 
         goods = new Goods();
         goods.setId(1L);
@@ -189,6 +214,8 @@ class GoodsServiceImplTest {
         ArgumentCaptor<Stock> captor = ArgumentCaptor.forClass(Stock.class);
         verify(stockMapper).insert(captor.capture());
         assertEquals(0, captor.getValue().getTotalStock());
+        // 库存行同步写商品名快照：查库存表时不用联 t_goods 也能看懂是哪个商品
+        assertEquals("iPhone 16", captor.getValue().getGoodsName());
         verify(bloomFilter).add(any());
     }
 
@@ -201,5 +228,25 @@ class GoodsServiceImplTest {
         dto.setNormalPrice(new BigDecimal("1.00"));
         goodsService.update(1L, dto);
         verify(redis).delete(anyString());
+    }
+
+    @Test
+    @DisplayName("更新商品：新名字同步刷到库存行与活动行的冗余列")
+    void updateSyncsRedundantNames() {
+        when(goodsMapper.selectById(1L)).thenReturn(goods);
+        GoodsDTO dto = new GoodsDTO();
+        dto.setGoodsName("renamed");
+        dto.setNormalPrice(new BigDecimal("1.00"));
+
+        goodsService.update(1L, dto);
+
+        // t_stock 与 t_seckill_activity 都是"配置行"语义，必须反映当前名字
+        ArgumentCaptor<Wrapper<Stock>> stockWrapper = ArgumentCaptor.forClass(Wrapper.class);
+        verify(stockMapper).update(isNull(), stockWrapper.capture());
+        assertTrue(((LambdaUpdateWrapper<Stock>) stockWrapper.getValue()).getSqlSet().contains("goods_name"));
+
+        ArgumentCaptor<Wrapper<SeckillActivity>> actWrapper = ArgumentCaptor.forClass(Wrapper.class);
+        verify(activityMapper).update(isNull(), actWrapper.capture());
+        assertTrue(((LambdaUpdateWrapper<SeckillActivity>) actWrapper.getValue()).getSqlSet().contains("goods_name"));
     }
 }

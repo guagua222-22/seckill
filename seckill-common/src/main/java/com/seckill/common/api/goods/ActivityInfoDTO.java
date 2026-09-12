@@ -21,6 +21,12 @@ public class ActivityInfoDTO {
 
     private Long goodsId;
 
+    /**
+     * 商品名快照：goods 预热时一并写进 Redis 活动缓存，seckill 下单直接取用，
+     * 省掉每单一次 Feign 回查商品名（缓存里没有该字段时才降级回查）。
+     */
+    private String goodsName;
+
     /** 秒杀价（低于日常价） */
     private BigDecimal seckillPrice;
 

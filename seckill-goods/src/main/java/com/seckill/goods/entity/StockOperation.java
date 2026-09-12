@@ -27,7 +27,13 @@ public class StockOperation {
 
     private Long goodsId;
 
+    /** 商品名快照(反范式)：操作发生时点冻结，之后不随商品改名更新（对账要看当时扣的是谁） */
+    private String goodsName;
+
     private Long activityId;
+
+    /** 活动名快照(反范式)：同上，操作时点冻结 */
+    private String activityName;
 
     /** 扣减数量（固定 1） */
     private Integer amount;

@@ -1,6 +1,7 @@
 package com.seckill.goods.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -10,8 +11,10 @@ import com.seckill.common.result.ErrorCode;
 import com.seckill.goods.cache.GoodsBloomFilter;
 import com.seckill.goods.dto.GoodsDTO;
 import com.seckill.goods.entity.Goods;
+import com.seckill.goods.entity.SeckillActivity;
 import com.seckill.goods.entity.Stock;
 import com.seckill.goods.mapper.GoodsMapper;
+import com.seckill.goods.mapper.SeckillActivityMapper;
 import com.seckill.goods.mapper.StockMapper;
 import com.seckill.goods.service.GoodsService;
 import com.seckill.goods.vo.CachedGoodsVO;
@@ -49,6 +52,7 @@ public class GoodsServiceImpl implements GoodsService {
 
     private final GoodsMapper goodsMapper;
     private final StockMapper stockMapper;
+    private final SeckillActivityMapper activityMapper;
     private final StringRedisTemplate redis;
     private final ObjectMapper objectMapper;
     private final GoodsBloomFilter bloomFilter;
@@ -66,6 +70,7 @@ public class GoodsServiceImpl implements GoodsService {
         // 秒杀库存独立成表：商品创建时初始化一行 0 库存，活动创建时再灌入
         Stock stock = new Stock();
         stock.setGoodsId(goods.getId());
+        stock.setGoodsName(goods.getGoodsName());
         stock.setTotalStock(0);
         stock.setAvailableStock(0);
         stock.setSoldCount(0);
@@ -87,6 +92,14 @@ public class GoodsServiceImpl implements GoodsService {
         goods.setDescription(dto.getDescription());
         goods.setNormalPrice(dto.getNormalPrice());
         goodsMapper.updateById(goods);
+        // 冗余列同步：t_stock/t_seckill_activity 的 goods_name 是"配置行"语义（要反映当前名字），
+        // 改名必须同事务刷过去；t_stock_operation 是操作时点流水，故意保持旧名不动
+        stockMapper.update(null, new LambdaUpdateWrapper<Stock>()
+                .set(Stock::getGoodsName, goods.getGoodsName())
+                .eq(Stock::getGoodsId, id));
+        activityMapper.update(null, new LambdaUpdateWrapper<SeckillActivity>()
+                .set(SeckillActivity::getGoodsName, goods.getGoodsName())
+                .eq(SeckillActivity::getGoodsId, id));
         // Cache Aside：更新 DB 后删除缓存，下次读时自然回填新数据。
         // 顺序是"先改库再删缓存"：即使删缓存失败，最坏情况是读到旧缓存，
         // 不会出现"删了缓存但库没改成功"的数据倒退。

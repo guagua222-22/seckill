@@ -58,6 +58,7 @@ class SeckillActivityServiceImplTest {
     void createSuccess() {
         Goods goods = new Goods();
         goods.setId(1L);
+        goods.setGoodsName("iPhone 16");
         when(goodsMapper.selectById(1L)).thenReturn(goods);
 
         Stock stock = new Stock();
@@ -72,6 +73,8 @@ class SeckillActivityServiceImplTest {
         assertEquals(0, activity.getStatus());
         assertEquals(100, stock.getTotalStock());
         assertEquals(100, stock.getAvailableStock());
+        // 活动行带商品名快照：查活动表时不用联 t_goods 就知道卖的是什么
+        assertEquals("iPhone 16", activity.getGoodsName());
         verify(stockMapper).updateById(stock);
     }
 
@@ -103,6 +106,7 @@ class SeckillActivityServiceImplTest {
     void createInsertsStockWhenAbsent() {
         Goods goods = new Goods();
         goods.setId(1L);
+        goods.setGoodsName("iPhone 16");
         when(goodsMapper.selectById(1L)).thenReturn(goods);
         when(stockMapper.selectOne(any(Wrapper.class))).thenReturn(null);
 
@@ -112,5 +116,6 @@ class SeckillActivityServiceImplTest {
         ArgumentCaptor<Stock> captor = ArgumentCaptor.forClass(Stock.class);
         verify(stockMapper).insert(captor.capture());
         assertEquals(100, captor.getValue().getAvailableStock());
+        assertEquals("iPhone 16", captor.getValue().getGoodsName());
     }
 }

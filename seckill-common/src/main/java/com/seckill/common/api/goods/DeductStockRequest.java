@@ -24,4 +24,10 @@ public class DeductStockRequest {
 
     /** 扣减数量（固定 1） */
     private Integer amount;
+
+    /** 商品名快照：调用方传入，goods 侧写流水时落库，避免为名字多查表 */
+    private String goodsName;
+
+    /** 活动名快照：同上 */
+    private String activityName;
 }

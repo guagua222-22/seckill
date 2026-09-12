@@ -23,6 +23,9 @@ public class Stock {
     /** 与 t_goods 一对一，唯一索引 uk_goods 保证一个商品只有一行库存 */
     private Long goodsId;
 
+    /** 商品名快照(反范式)：配置行语义，商品改名时由 GoodsServiceImpl.update 同步刷新 */
+    private String goodsName;
+
     /** 活动总库存（活动创建时灌入） */
     private Integer totalStock;
 

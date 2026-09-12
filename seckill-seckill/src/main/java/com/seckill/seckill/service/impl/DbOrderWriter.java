@@ -63,7 +63,8 @@ public class DbOrderWriter {
         // 2. Feign 扣 DB 库存（goods 侧条件更新 + 幂等流水同事务，requestId 与下单一致；
         //    重复调用/消息重投都不会二次扣减）
         FeignResultUtils.unwrap(goodsClient.deductStock(new DeductStockRequest(
-                dto.getRequestId(), activity.getGoodsId(), dto.getActivityId(), 1)));
+                dto.getRequestId(), activity.getGoodsId(), dto.getActivityId(), 1,
+                goodsName, activity.getActivityName())));
 
         // 3. 本地插订单：唯一索引兜底并发穿透预检
         Order order = new Order();

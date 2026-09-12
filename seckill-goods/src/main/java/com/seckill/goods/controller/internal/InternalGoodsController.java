@@ -85,6 +85,8 @@ public class InternalGoodsController {
         dto.setId(activity.getId());
         dto.setActivityName(activity.getActivityName());
         dto.setGoodsId(activity.getGoodsId());
+        // 与 Redis 活动缓存保持同一套字段：走 Feign 兜底时 seckill 也能直接拿到商品名快照
+        dto.setGoodsName(activity.getGoodsName());
         dto.setSeckillPrice(activity.getSeckillPrice());
         dto.setTotalStock(activity.getTotalStock());
         dto.setStartTime(activity.getStartTime());

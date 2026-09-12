@@ -16,6 +16,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.Spy;
@@ -35,6 +36,7 @@ import java.time.LocalDateTime;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyLong;
@@ -217,6 +219,23 @@ class SeckillOrderServiceImplTest {
         BizException e = assertThrows(BizException.class, () -> seckillOrderService.createOrder(dto()));
         // Feign 返回的业务码原样透传
         assertEquals(ErrorCode.ACTIVITY_NOT_FOUND.getCode(), e.getCode());
+    }
+
+    @Test
+    @DisplayName("热路径免 Feign：活动信息自带商品名快照时不再回查 goods")
+    void goodsNameFromActivityCache() {
+        activity.setGoodsName("测试商品");
+        when(redis.execute(any(DefaultRedisScript.class), anyList(), any(Object[].class))).thenReturn(1L);
+
+        assertDoesNotThrow(() -> seckillOrderService.createOrder(dto()));
+
+        // 关键断言：商品名来自活动缓存，没有再发一次跨服务调用
+        verify(goodsClient, never()).goodsName(anyLong());
+        // 消息体里的商品名快照就是缓存里的那个值
+        ArgumentCaptor<String> body = ArgumentCaptor.forClass(String.class);
+        verify(recordMessageWriter).write(eq("req-1"), eq(1L), eq("test_1"),
+                eq(100L), eq("测试活动"), anyString(), body.capture());
+        assertTrue(body.getValue().contains("测试商品"));
     }
 
     @Test

@@ -63,7 +63,9 @@ public class StockOperationServiceImpl implements StockOperationService {
         StockOperation op = new StockOperation();
         op.setRequestId(request.getRequestId());
         op.setGoodsId(request.getGoodsId());
+        op.setGoodsName(request.getGoodsName() == null ? "" : request.getGoodsName());
         op.setActivityId(request.getActivityId());
+        op.setActivityName(request.getActivityName() == null ? "" : request.getActivityName());
         op.setAmount(request.getAmount() == null ? 1 : request.getAmount());
         op.setStatus(0);
         try {

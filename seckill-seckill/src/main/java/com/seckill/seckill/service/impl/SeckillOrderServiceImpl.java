@@ -216,8 +216,16 @@ public class SeckillOrderServiceImpl implements SeckillOrderService {
         return message;
     }
 
-    /** 商品名快照：Feign 调 goods-service，商品不存在降级为空串 */
+    /**
+     * 商品名快照：优先用活动信息里自带的 goodsName（goods 预热时已写进 Redis 缓存，
+     * Feign 兜底也返回同一字段），热路径因此省掉每单一次跨服务调用；
+     * 只有快照缺失（升级前写入的旧缓存条目）才降级 Feign 回查，商品不存在返回空串。
+     */
     private String loadGoodsName(ActivityInfoDTO activity) {
+        String snapshot = activity.getGoodsName();
+        if (snapshot != null && !snapshot.isBlank()) {
+            return snapshot;
+        }
         String name = FeignResultUtils.unwrap(goodsClient.goodsName(activity.getGoodsId()));
         return name == null ? "" : name;
     }

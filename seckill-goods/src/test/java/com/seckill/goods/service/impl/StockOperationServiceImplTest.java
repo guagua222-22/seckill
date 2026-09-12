@@ -16,6 +16,7 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -55,7 +56,8 @@ class StockOperationServiceImplTest {
     private StockOperationServiceImpl service;
 
     private DeductStockRequest deductReq(String requestId) {
-        return new DeductStockRequest(requestId, 1L, 2L, 1);
+        // 后两个参数是商品名/活动名快照：调用方传过来，goods 侧直接落流水，不用再回查表
+        return new DeductStockRequest(requestId, 1L, 2L, 1, "iPhone 16", "双11秒杀");
     }
 
     @Test
@@ -66,7 +68,25 @@ class StockOperationServiceImplTest {
 
         service.deduct(deductReq("r1"));
 
-        verify(operationMapper).insert(any(StockOperation.class));
+        ArgumentCaptor<StockOperation> captor = ArgumentCaptor.forClass(StockOperation.class);
+        verify(operationMapper).insert(captor.capture());
+        // 名字快照随流水落库：查库时不用联表就能看到"哪个商品的哪个活动"
+        assertEquals("iPhone 16", captor.getValue().getGoodsName());
+        assertEquals("双11秒杀", captor.getValue().getActivityName());
+    }
+
+    @Test
+    @DisplayName("调用方没传名字快照：落空串而不是 null（列是 NOT NULL）")
+    void deductWithoutNameSnapshot() {
+        when(operationMapper.selectCount(any(Wrapper.class))).thenReturn(0L);
+        when(stockMapper.update(any(), any(Wrapper.class))).thenReturn(1);
+
+        service.deduct(new DeductStockRequest("r1", 1L, 2L, 1, null, null));
+
+        ArgumentCaptor<StockOperation> captor = ArgumentCaptor.forClass(StockOperation.class);
+        verify(operationMapper).insert(captor.capture());
+        assertEquals("", captor.getValue().getGoodsName());
+        assertEquals("", captor.getValue().getActivityName());
     }
 
     @Test

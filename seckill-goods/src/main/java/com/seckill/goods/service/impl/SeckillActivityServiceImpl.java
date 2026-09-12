@@ -41,6 +41,7 @@ public class SeckillActivityServiceImpl implements SeckillActivityService {
         SeckillActivity activity = new SeckillActivity();
         activity.setActivityName(dto.getActivityName());
         activity.setGoodsId(dto.getGoodsId());
+        activity.setGoodsName(goods.getGoodsName());
         activity.setSeckillPrice(dto.getSeckillPrice());
         activity.setTotalStock(dto.getTotalStock());
         activity.setStartTime(dto.getStartTime());
@@ -56,6 +57,7 @@ public class SeckillActivityServiceImpl implements SeckillActivityService {
         if (stock == null) {
             stock = new Stock();
             stock.setGoodsId(dto.getGoodsId());
+            stock.setGoodsName(goods.getGoodsName());
             stock.setVersion(0);
             stock.setSoldCount(0);
         }

@@ -107,7 +107,11 @@ class DbOrderWriterTest {
 
         dbOrderWriter.writeOrder(dto, activity, "iPhone", "test_1");
 
-        verify(goodsClient).deductStock(any(DeductStockRequest.class));
+        // 扣库存请求要带上名字快照：goods 侧写 t_stock_operation 时直接落库，不用再回查商品/活动表
+        ArgumentCaptor<DeductStockRequest> deductCaptor = ArgumentCaptor.forClass(DeductStockRequest.class);
+        verify(goodsClient).deductStock(deductCaptor.capture());
+        assertEquals("iPhone", deductCaptor.getValue().getGoodsName());
+        assertEquals("测试活动", deductCaptor.getValue().getActivityName());
         // mock 的 insert 不会回填雪花 ID，用参数捕获断言落单内容
         ArgumentCaptor<Order> captor = ArgumentCaptor.forClass(Order.class);
         verify(orderMapper).insert(captor.capture());
