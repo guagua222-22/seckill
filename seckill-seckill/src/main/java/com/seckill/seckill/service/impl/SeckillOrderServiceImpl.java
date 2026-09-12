@@ -7,6 +7,8 @@ import com.seckill.common.api.goods.ActivityInfoDTO;
 import com.seckill.common.exception.BizException;
 import com.seckill.common.redis.RedisKeys;
 import com.seckill.common.result.ErrorCode;
+import com.seckill.seckill.cache.HotActivityLocalCache;
+import com.seckill.seckill.config.SentinelRuleConfig;
 import com.seckill.seckill.dto.SeckillMessage;
 import com.seckill.seckill.dto.SeckillOrderDTO;
 import com.seckill.seckill.entity.LocalMessage;
@@ -16,6 +18,7 @@ import com.seckill.seckill.feign.GoodsClient;
 import com.seckill.seckill.feign.UserClient;
 import com.seckill.seckill.mapper.LocalMessageMapper;
 import com.seckill.seckill.mapper.SeckillRecordMapper;
+import com.seckill.seckill.sentinel.SentinelGuard;
 import com.seckill.seckill.service.SeckillOrderService;
 import lombok.RequiredArgsConstructor;
 import lombok.SneakyThrows;
@@ -38,7 +41,7 @@ import java.util.List;
  *
  * 链路：
  * 1. 幂等快路径：同一 requestId 已排队/已下单 → 直接返回，不重复预扣
- * 2. 活动信息（Redis 优先，miss 走 Feign 调 goods）+ 时间窗 + 用户校验（Feign 调 user）
+ * 2. 活动信息（JVM 本地缓存 → Redis → Feign 调 goods）+ 时间窗 + 用户校验（Feign 调 user）
  * 3. Lua 原子预扣（快闸门）
  * 4. 本地事务：流水(t_seckill_record) + 消息(t_local_message) 同事务落库
  * 5. 事务提交后异步发 MQ：成功 → 消息置"已发送"；失败 → 留表，补偿任务兜底
@@ -67,6 +70,7 @@ public class SeckillOrderServiceImpl implements SeckillOrderService {
     private final LocalMessageMapper messageMapper;
     private final RocketMQTemplate rocketMQTemplate;
     private final RedisStockRollback stockRollback;
+    private final HotActivityLocalCache activityCache;
 
     @Value("${seckill.mq.topic}")
     private String topic;
@@ -100,7 +104,9 @@ public class SeckillOrderServiceImpl implements SeckillOrderService {
         // 取回的用户名会沿链路透传到消息体、流水表、订单表（反范式冗余），
         // 这样在 Navicat 里看 seckill_seckill 库的数据表就能直接知道是谁下的单，
         // 不必再去 seckill_user 库按 id 对照——微服务拆库后跨库 join 本来就做不到。
-        String username = FeignResultUtils.unwrap(userClient.username(dto.getUserId()));
+        String username = SentinelGuard.call(SentinelRuleConfig.RES_DEP_USER_USERNAME,
+                ErrorCode.SERVICE_DEGRADED,
+                () -> FeignResultUtils.unwrap(userClient.username(dto.getUserId())));
         if (username == null) {
             throw new BizException(ErrorCode.USER_NOT_FOUND);
         }
@@ -226,7 +232,9 @@ public class SeckillOrderServiceImpl implements SeckillOrderService {
         if (snapshot != null && !snapshot.isBlank()) {
             return snapshot;
         }
-        String name = FeignResultUtils.unwrap(goodsClient.goodsName(activity.getGoodsId()));
+        String name = SentinelGuard.call(SentinelRuleConfig.RES_DEP_GOODS_NAME,
+                ErrorCode.SERVICE_DEGRADED,
+                () -> FeignResultUtils.unwrap(goodsClient.goodsName(activity.getGoodsId())));
         return name == null ? "" : name;
     }
 
@@ -244,13 +252,27 @@ public class SeckillOrderServiceImpl implements SeckillOrderService {
                 String.valueOf(userId));
     }
 
-    /** 活动信息：Redis 预热缓存优先（goods 写入的共享契约），miss 走 Feign 兜底 */
+    /**
+     * 活动信息：先走 JVM 本地缓存（M6 热点隔离），回源才是"Redis 预热缓存优先 + Feign 兜底"。
+     * 开抢时全场就一两个活动在卖，seckill:activity:{id} 是全系统最热的 key，
+     * 每单一次 Redis GET + 一次 Jackson 反序列化会直接把吞吐压在这个 key 上；
+     * 本地缓存把同一实例内的 N 个并发请求合并成一次回源。
+     * 敢缓存的前提：缓存的是活动配置（名字/时间窗/价格），库存永远走 Lua 现扣，
+     * 超卖防线不依赖这层缓存，代价只是配置改动最多延迟一个本地 TTL 生效。
+     */
     private ActivityInfoDTO loadActivity(Long activityId) {
+        return activityCache.get(activityId, this::loadActivityFromSource);
+    }
+
+    /** 活动信息回源：Redis 预热缓存优先（goods 写入的共享契约），miss 走 Feign 兜底（带熔断保护） */
+    private ActivityInfoDTO loadActivityFromSource(Long activityId) {
         String json = redis.opsForValue().get(RedisKeys.activityInfo(activityId));
         if (json != null) {
             return readActivity(json);
         }
-        return FeignResultUtils.unwrap(goodsClient.activity(activityId));
+        return SentinelGuard.call(SentinelRuleConfig.RES_DEP_GOODS_ACTIVITY,
+                ErrorCode.SERVICE_DEGRADED,
+                () -> FeignResultUtils.unwrap(goodsClient.activity(activityId)));
     }
 
     @SneakyThrows

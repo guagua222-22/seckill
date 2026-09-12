@@ -3,12 +3,12 @@ package com.seckill.goods.service.impl;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
-import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.seckill.common.exception.BizException;
 import com.seckill.common.redis.RedisKeys;
 import com.seckill.common.result.ErrorCode;
 import com.seckill.goods.cache.GoodsBloomFilter;
+import com.seckill.goods.cache.HotGoodsLocalCache;
 import com.seckill.goods.dto.GoodsDTO;
 import com.seckill.goods.entity.Goods;
 import com.seckill.goods.entity.SeckillActivity;
@@ -56,6 +56,7 @@ public class GoodsServiceImpl implements GoodsService {
     private final StringRedisTemplate redis;
     private final ObjectMapper objectMapper;
     private final GoodsBloomFilter bloomFilter;
+    private final HotGoodsLocalCache hotCache;
 
     @Override
     @Transactional
@@ -104,11 +105,25 @@ public class GoodsServiceImpl implements GoodsService {
         // 顺序是"先改库再删缓存"：即使删缓存失败，最坏情况是读到旧缓存，
         // 不会出现"删了缓存但库没改成功"的数据倒退。
         redis.delete(RedisKeys.goodsInfo(id));
+        // 本地热点缓存也一并失效：不删的话热点商品会把旧名字多留一个本地 TTL
+        hotCache.invalidate(id);
         return goods;
     }
 
     @Override
     public GoodsDetailVO getDetail(Long id) {
+        // 热点商品的商品基础信息多一层 JVM 本地缓存：开抢瞬间所有实例的请求不再齐打
+        // Redis 同一个 key，本地 TTL 秒级，用"展示数据短暂最终一致"换 Redis 热点 key 的吞吐
+        CachedGoodsVO base = hotCache.isHot(id)
+                ? hotCache.getBase(id, this::loadBase)
+                : loadBase(id);
+        // 库存永远现查：本地缓存里存的是不含库存的基础信息，
+        // 交易相关的数字一次都不许进缓存，热点商品的正确性与普通商品完全一致
+        return toDetail(base, id);
+    }
+
+    /** 基础信息回源链路：布隆拦截 → 缓存三件套 → DB 回填（M3 原逻辑），不含库存 */
+    private CachedGoodsVO loadBase(Long id) {
         // 第一层：布隆说"一定不存在"→ 直接拒，连 Redis 都不查（穿透防线）
         if (!bloomFilter.mightContain(id)) {
             throw new BizException(ErrorCode.GOODS_NOT_FOUND);
@@ -123,7 +138,7 @@ public class GoodsServiceImpl implements GoodsService {
             }
             CachedGoodsVO vo = parseCached(cached);
             if (vo.getExpireAt().isAfter(LocalDateTime.now())) {
-                return toDetail(vo, id);
+                return vo;
             }
             // 逻辑已过期：SETNX 抢重建锁——抢到的人进 DB 重建，没抢到的人先返回旧值（击穿防线）
             Boolean gotLock = redis.opsForValue().setIfAbsent(
@@ -135,7 +150,7 @@ public class GoodsServiceImpl implements GoodsService {
                     redis.delete(RedisKeys.rebuildLock(id));
                 }
             }
-            return toDetail(vo, id);
+            return vo;
         }
 
         // 缓存未命中：查 DB 回填（Cache Aside 的"旁路"回填）
@@ -146,7 +161,7 @@ public class GoodsServiceImpl implements GoodsService {
         }
         CachedGoodsVO vo = buildCached(goods, id);
         redis.opsForValue().set(cacheKey, toJson(vo), randomTtl());
-        return toDetail(vo, id);
+        return vo;
     }
 
     @Override
@@ -213,7 +228,9 @@ public class GoodsServiceImpl implements GoodsService {
 
     @SneakyThrows
     private CachedGoodsVO parseCached(String json) {
-        JsonNode node = objectMapper.readTree(json);
-        return objectMapper.treeToValue(node, CachedGoodsVO.class);
+        // 必须直接 readValue，不能先 readTree 再 treeToValue：
+        // Jackson 默认把 JSON 里的浮点解析成 DoubleNode，价格经 double 一转就丢 scale
+        // （缓存存 6999.00、读出来变 6999.0），金额绝不允许走 double
+        return objectMapper.readValue(json, CachedGoodsVO.class);
     }
 }

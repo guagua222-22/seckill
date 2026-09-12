@@ -64,6 +64,18 @@
       <groupId>org.redisson</groupId>
       <artifactId>redisson-spring-boot-starter</artifactId>
     </dependency>
+    <!-- M6 Sentinel：下单接口 QPS 流控 + 热点参数限流 + Feign 熔断降级。
+         规则在代码里（SentinelRuleConfig），控制台只读不改规则 -->
+    <dependency>
+      <groupId>com.alibaba.cloud</groupId>
+      <artifactId>spring-cloud-starter-alibaba-sentinel</artifactId>
+    </dependency>
+    <!-- M6 热点隔离：活动信息 JVM 本地缓存（Caffeine），把 seckill:activity:{id}
+         这个全系统最热的 key 的压力除以实例内并发度；版本由 Spring Boot BOM 管理 -->
+    <dependency>
+      <groupId>com.github.ben-manes.caffeine</groupId>
+      <artifactId>caffeine</artifactId>
+    </dependency>
     <!-- RocketMQ：异步下单削峰（producer + consumer） -->
     <dependency>
       <groupId>org.apache.rocketmq</groupId>

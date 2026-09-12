@@ -8,6 +8,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.seckill.common.exception.BizException;
 import com.seckill.common.result.ErrorCode;
 import com.seckill.goods.cache.GoodsBloomFilter;
+import com.seckill.goods.cache.HotGoodsLocalCache;
 import com.seckill.goods.dto.GoodsDTO;
 import com.seckill.goods.entity.Goods;
 import com.seckill.goods.entity.SeckillActivity;
@@ -84,6 +85,12 @@ class GoodsServiceImplTest {
     /** 真实 ObjectMapper（注册时间模块），手动注入被测类，避免 Mockito 代理干扰序列化 */
     private final ObjectMapper objectMapper = new ObjectMapper().findAndRegisterModules();
 
+    /**
+     * 真实本地缓存（不是 mock）：要测的正是 Caffeine 的命中与失效行为，
+     * mock 掉等于没测。TTL 给 60s，保证单测执行期间条目不会自然过期干扰断言。
+     */
+    private final HotGoodsLocalCache hotCache = new HotGoodsLocalCache(60, 1024);
+
     private GoodsServiceImpl goodsService;
 
     private Goods goods;
@@ -91,9 +98,9 @@ class GoodsServiceImplTest {
 
     @BeforeEach
     void setUp() {
-        // 手动构造被测对象：Redis 等外部依赖用 mock，ObjectMapper 用真实实例
+        // 手动构造被测对象：Redis 等外部依赖用 mock，ObjectMapper / 本地缓存用真实实例
         goodsService = new GoodsServiceImpl(goodsMapper, stockMapper, activityMapper,
-                redis, objectMapper, bloomFilter);
+                redis, objectMapper, bloomFilter, hotCache);
 
         goods = new Goods();
         goods.setId(1L);
@@ -136,6 +143,21 @@ class GoodsServiceImplTest {
         GoodsDetailVO vo = goodsService.getDetail(1L);
         assertEquals("iPhone 16 Pro", vo.getGoodsName());
         verify(goodsMapper, never()).selectById(any());
+    }
+
+    @Test
+    @DisplayName("缓存回读：价格 BigDecimal 精度不被 double 吃掉（7999.00 不能变成 7999.0）")
+    void cacheReadPreservesPriceScale() throws Exception {
+        when(bloomFilter.mightContain(1L)).thenReturn(true);
+        when(valueOps.get(anyString())).thenReturn(cachedJson());
+        when(stockMapper.selectOne(any(Wrapper.class))).thenReturn(null);
+
+        GoodsDetailVO vo = goodsService.getDetail(1L);
+
+        // BigDecimal.equals 同时比较数值与 scale，能抓住"金额走了 double"的回归。
+        // 踩过的坑：parseCached 用 readTree+treeToValue 时 Jackson 先转 DoubleNode，
+        // 缓存里存 6999.00、读出来变 6999.0，多实例下同一商品两个实例返回的价格不一致
+        assertEquals(new BigDecimal("7999.00"), vo.getNormalPrice());
     }
 
     @Test
@@ -248,5 +270,67 @@ class GoodsServiceImplTest {
         ArgumentCaptor<Wrapper<SeckillActivity>> actWrapper = ArgumentCaptor.forClass(Wrapper.class);
         verify(activityMapper).update(isNull(), actWrapper.capture());
         assertTrue(((LambdaUpdateWrapper<SeckillActivity>) actWrapper.getValue()).getSqlSet().contains("goods_name"));
+    }
+
+    private Stock stock(int available) {
+        Stock s = new Stock();
+        s.setGoodsId(1L);
+        s.setTotalStock(100);
+        s.setAvailableStock(available);
+        s.setSoldCount(100 - available);
+        return s;
+    }
+
+    @Test
+    @DisplayName("热点隔离：热点商品第二次读走本地缓存，Redis 热点 key 只被打一次")
+    void hotGoodsSecondReadServedLocally() throws Exception {
+        hotCache.markHot(1L);
+        when(bloomFilter.mightContain(1L)).thenReturn(true);
+        when(valueOps.get(anyString())).thenReturn(cachedJson());
+        // 两次读故意返回不同库存：本地缓存只缓存商品基础信息，库存必须每次现查
+        when(stockMapper.selectOne(any(Wrapper.class))).thenReturn(stock(90), stock(80));
+
+        GoodsDetailVO first = goodsService.getDetail(1L);
+        GoodsDetailVO second = goodsService.getDetail(1L);
+
+        assertEquals("iPhone 16 Pro", second.getGoodsName());
+        assertEquals(Integer.valueOf(90), first.getAvailableStock());
+        assertEquals(Integer.valueOf(80), second.getAvailableStock());
+        verify(valueOps, times(1)).get(anyString());
+        verify(stockMapper, times(2)).selectOne(any(Wrapper.class));
+    }
+
+    @Test
+    @DisplayName("热点隔离：非热点商品不进本地缓存，每次读都打 Redis")
+    void coldGoodsAlwaysHitsRedis() throws Exception {
+        when(bloomFilter.mightContain(1L)).thenReturn(true);
+        when(valueOps.get(anyString())).thenReturn(cachedJson());
+        when(stockMapper.selectOne(any(Wrapper.class))).thenReturn(null);
+
+        goodsService.getDetail(1L);
+        goodsService.getDetail(1L);
+
+        // 普通商品多一层本地缓存只会增加不一致窗口，没有收益
+        verify(valueOps, times(2)).get(anyString());
+    }
+
+    @Test
+    @DisplayName("热点隔离：更新商品同时失效本地缓存，不会把旧名字多留一个 TTL")
+    void updateInvalidatesHotLocalCache() throws Exception {
+        hotCache.markHot(1L);
+        when(bloomFilter.mightContain(1L)).thenReturn(true);
+        when(valueOps.get(anyString())).thenReturn(cachedJson());
+        when(stockMapper.selectOne(any(Wrapper.class))).thenReturn(null);
+        when(goodsMapper.selectById(1L)).thenReturn(goods);
+
+        goodsService.getDetail(1L);
+        GoodsDTO dto = new GoodsDTO();
+        dto.setGoodsName("renamed");
+        dto.setNormalPrice(new BigDecimal("1.00"));
+        goodsService.update(1L, dto);
+        goodsService.getDetail(1L);
+
+        verify(redis).delete(anyString());
+        verify(valueOps, times(2)).get(anyString());
     }
 }

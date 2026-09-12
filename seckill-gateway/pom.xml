@@ -32,6 +32,17 @@
       <groupId>com.alibaba.cloud</groupId>
       <artifactId>spring-cloud-starter-alibaba-nacos-discovery</artifactId>
     </dependency>
+    <!-- M6 Sentinel：starter 提供限流/熔断核心与控制台上报；
+         gateway-adapter 把 Sentinel 的流控接到 WebFlux 网关过滤器链上
+         （网关用 GatewayFlowRule 按路由/API 分组限流，与 MVC 服务的 FlowRule 是两套 API） -->
+    <dependency>
+      <groupId>com.alibaba.cloud</groupId>
+      <artifactId>spring-cloud-starter-alibaba-sentinel</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>com.alibaba.csp</groupId>
+      <artifactId>sentinel-spring-cloud-gateway-adapter</artifactId>
+    </dependency>
     <dependency>
       <groupId>org.springframework.boot</groupId>
       <artifactId>spring-boot-starter-actuator</artifactId>

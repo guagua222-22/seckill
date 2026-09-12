@@ -40,4 +40,10 @@ public final class RedisKeys {
     public static String rebuildLock(Long goodsId) {
         return "lock:rebuild:" + goodsId;
     }
+
+    /** 商品 ID 布隆过滤器（Redisson bitmap 实现）：M6 起所有 goods 实例共享同一份，
+     *  多实例部署时穿透防线不会因各自维护本地布隆而出现"这台拦、那台放"的不一致 */
+    public static String goodsBloom() {
+        return "goods:bloom:ids";
+    }
 }

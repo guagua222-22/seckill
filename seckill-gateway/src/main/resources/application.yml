@@ -8,6 +8,11 @@ spring:
     nacos:
       discovery:
         server-addr: localhost:8848
+    sentinel:
+      transport:
+        # 控制台只读：网关路由级限流（GatewayFlowRule）的实时通过/拒绝 QPS 在这里看
+        dashboard: localhost:8858
+      eager: true
     gateway:
       # 连接超时压到 1s：默认 45s 会让前端在服务不可用时长时间挂起
       httpclient:

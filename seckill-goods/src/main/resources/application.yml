@@ -40,6 +40,22 @@ mybatis-plus:
     db-config:
       id-type: assign_id
 
+seckill:
+  bloom:
+    # M6 分布式布隆（Redisson bitmap）：预期商品量与误报率。
+    # 注意 tryInit 只在 Redis 里 goods:bloom:ids 不存在时才写入这两个参数，
+    # 想调整必须先在 redis-cli 里 DEL 掉这个 key 再重启，否则参数不生效
+    expected-insertions: 100000
+    false-probability: 0.01
+  hot-cache:
+    # M6 热点隔离：isHot=1 的活动关联商品在 JVM 内多缓存一层（Caffeine），
+    # 开抢瞬间不再让所有实例齐打 Redis 的同一个 seckill:goods:{id} 热点 key。
+    # TTL 取秒级：本地缓存必然带来各实例短暂不一致，而这里只缓存商品基础信息，
+    # 库存永远现查，所以 1s 最终一致完全可接受；调大会同步拉长不一致窗口
+    ttl-seconds: 1
+    # 热点商品是少数（运营手工标 isHot），1024 条足够且内存占用可忽略
+    max-size: 1024
+
 management:
   endpoints:
     web:

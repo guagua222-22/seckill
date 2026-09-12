@@ -9,6 +9,8 @@ import lombok.Getter;
  * <pre>
  * 0       成功
  * 400     参数类错误（校验失败、请求体格式错误）
+ * 429     限流（Sentinel QPS/热点参数规则拒绝）
+ * 503     熔断降级（依赖服务不可用，快速失败）
  * 100x    用户域（注册/登录）
  * 200x    商品/活动域（含秒杀时间窗、库存）
  * 300x    订单域（查单、重复下单）
@@ -24,6 +26,11 @@ public enum ErrorCode {
     SUCCESS(0, "success"),
 
     PARAM_INVALID(400, "参数不合法"),
+
+    /** M6 Sentinel：QPS/热点参数规则拒绝，前端提示稍后再试 */
+    RATE_LIMITED(429, "请求太火爆，请稍后再试"),
+    /** M6 Sentinel：依赖服务熔断打开期间快速失败，不拖住调用方线程 */
+    SERVICE_DEGRADED(503, "依赖服务降级中，请稍后重试"),
 
     USERNAME_EXISTS(1001, "用户名已存在"),
     USER_NOT_FOUND(1002, "用户不存在"),

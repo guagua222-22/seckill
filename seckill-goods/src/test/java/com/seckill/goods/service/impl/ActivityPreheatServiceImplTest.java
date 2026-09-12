@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.core.conditions.Wrapper;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.seckill.common.api.goods.ActivityInfoDTO;
 import com.seckill.common.redis.RedisKeys;
+import com.seckill.goods.cache.HotGoodsLocalCache;
 import com.seckill.goods.entity.SeckillActivity;
 import com.seckill.goods.mapper.SeckillActivityMapper;
 import org.junit.jupiter.api.BeforeEach;
@@ -24,12 +25,14 @@ import java.math.BigDecimal;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -51,6 +54,8 @@ class ActivityPreheatServiceImplTest {
     private ValueOperations<String, String> valueOps;
     @Mock
     private SeckillActivityMapper activityMapper;
+    @Mock
+    private HotGoodsLocalCache hotCache;
 
     /** 真实 ObjectMapper（注册时间模块），与两个服务运行时的序列化行为一致 */
     @Spy
@@ -126,5 +131,41 @@ class ActivityPreheatServiceImplTest {
 
         verify(valueOps, times(2)).set(anyString(), anyString(), any(Duration.class));
         verify(valueOps).set(eq(RedisKeys.activityInfo(200L)), anyString(), any(Duration.class));
+    }
+
+    @Test
+    @DisplayName("热点隔离：预热单个热点活动立即标记，不等下一轮定时刷新")
+    void preheatMarksHotGoodsImmediately() {
+        activity.setIsHot(1);
+        when(valueOps.setIfAbsent(anyString(), anyString())).thenReturn(true);
+
+        preheatService.preheat(activity);
+
+        verify(hotCache).markHot(1L);
+    }
+
+    @Test
+    @DisplayName("热点隔离：批量预热只把 isHot=1 的商品刷进本地缓存热点集合")
+    void preheatUpcomingRefreshesHotGoodsIds() {
+        activity.setIsHot(1);
+        SeckillActivity cold = new SeckillActivity();
+        cold.setId(200L);
+        cold.setActivityName("普通活动");
+        cold.setGoodsId(2L);
+        cold.setGoodsName("iPad");
+        cold.setSeckillPrice(new BigDecimal("19.90"));
+        cold.setTotalStock(50);
+        cold.setIsHot(0);
+        cold.setStartTime(LocalDateTime.now().plusMinutes(3));
+        cold.setEndTime(LocalDateTime.now().plusHours(2));
+        when(activityMapper.selectList(any(Wrapper.class))).thenReturn(List.of(activity, cold));
+        when(valueOps.setIfAbsent(anyString(), anyString())).thenReturn(true);
+
+        preheatService.preheatUpcoming();
+
+        // 整批替换语义：集合就是"当前时间窗内该走本地缓存"的全集
+        verify(hotCache).refreshHotIds(Set.of(1L));
+        // 非热点商品不进本地缓存——多一层缓存只会增加不一致窗口，没有收益
+        verify(hotCache, never()).markHot(2L);
     }
 }

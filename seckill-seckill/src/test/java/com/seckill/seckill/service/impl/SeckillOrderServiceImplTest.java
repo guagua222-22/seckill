@@ -3,8 +3,10 @@ package com.seckill.seckill.service.impl;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.seckill.common.api.goods.ActivityInfoDTO;
 import com.seckill.common.exception.BizException;
+import com.seckill.common.redis.RedisKeys;
 import com.seckill.common.result.ErrorCode;
 import com.seckill.common.result.Result;
+import com.seckill.seckill.cache.HotActivityLocalCache;
 import com.seckill.seckill.dto.SeckillOrderDTO;
 import com.seckill.seckill.entity.SeckillRecord;
 import com.seckill.seckill.feign.GoodsClient;
@@ -43,6 +45,7 @@ import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -81,6 +84,13 @@ class SeckillOrderServiceImplTest {
 
     @Spy
     private ObjectMapper objectMapper = new ObjectMapper().findAndRegisterModules();
+
+    /**
+     * 真实本地缓存（@Spy 走真实方法）：要测的正是 Caffeine "同 key 只回源一次"的行为，
+     * mock 掉等于没测。TTL 给 60s，保证单测执行期间条目不会自然过期干扰断言。
+     */
+    @Spy
+    private HotActivityLocalCache activityCache = new HotActivityLocalCache(60_000, 256);
 
     @InjectMocks
     private SeckillOrderServiceImpl seckillOrderService;
@@ -256,5 +266,25 @@ class SeckillOrderServiceImplTest {
         verify(recordMessageWriter, never()).write(anyString(), any(), any(), any(), any(), anyString(), anyString());
         verify(rocketMQTemplate, never()).asyncSend(anyString(), any(Object.class),
                 any(org.apache.rocketmq.client.producer.SendCallback.class));
+    }
+
+    @Test
+    @DisplayName("热点隔离：连续两单只回源一次活动信息，但 Lua 预扣每单都执行")
+    void activityInfoServedFromLocalCache() throws Exception {
+        // Redis 里有 goods 预热写入的活动信息（共享契约）
+        // 先序列化再打桩：objectMapper 是 @Spy，写在 thenReturn 参数里会触发嵌套打桩
+        String json = objectMapper.writeValueAsString(activity);
+        when(valueOps.get(RedisKeys.activityInfo(100L))).thenReturn(json);
+        when(redis.execute(any(DefaultRedisScript.class), anyList(), any(Object[].class))).thenReturn(1L);
+
+        seckillOrderService.createOrder(dto());
+        SeckillOrderDTO second = dto();
+        second.setRequestId("req-2");
+        seckillOrderService.createOrder(second);
+
+        // 关键断言：第二单吃本地缓存，全系统最热的 activity key 只被打了一次
+        verify(valueOps, times(1)).get(RedisKeys.activityInfo(100L));
+        // 库存绝不进本地缓存：每单都要走一次 Lua 原子预扣
+        verify(redis, times(2)).execute(any(DefaultRedisScript.class), anyList(), any(Object[].class));
     }
 }

@@ -1,7 +1,10 @@
 package com.seckill.seckill.controller;
 
+import com.seckill.common.result.ErrorCode;
 import com.seckill.common.result.Result;
+import com.seckill.seckill.config.SentinelRuleConfig;
 import com.seckill.seckill.dto.SeckillOrderDTO;
+import com.seckill.seckill.sentinel.SentinelGuard;
 import com.seckill.seckill.service.SeckillOrderService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -27,10 +30,19 @@ public class SeckillController {
     /**
      * M4 起为异步排队模式：立即返回"排队中"（code=0），
      * 前端轮询 GET /api/order/query?requestId= 获取最终下单结果。
+     *
+     * M6 起入口挂 Sentinel：总 QPS 流控 + 按 activityId 的热点参数限流，
+     * 被规则拒绝时抛 RATE_LIMITED（429 语义），全局异常处理统一转 Result。
      */
     @PostMapping("/order")
     public Result<Void> order(@Valid @RequestBody SeckillOrderDTO dto) {
-        seckillOrderService.createOrder(dto);
+        // 手动埋点而非注解：热点参数是 DTO 里的 activityId，注解按形参下标取不到嵌套字段
+        SentinelGuard.call(SentinelRuleConfig.RES_CREATE_ORDER, ErrorCode.RATE_LIMITED,
+                () -> {
+                    seckillOrderService.createOrder(dto);
+                    return null;
+                },
+                dto.getActivityId());
         return Result.ok();
     }
 

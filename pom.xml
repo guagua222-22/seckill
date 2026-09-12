@@ -38,7 +38,6 @@
     <mybatis-plus.version>3.5.7</mybatis-plus.version>
     <redisson.version>3.32.0</redisson.version>
     <rocketmq-starter.version>2.3.2</rocketmq-starter.version>
-    <guava.version>33.3.1-jre</guava.version>
     <commons-lang3.version>3.17.0</commons-lang3.version>
     <!-- jacoco 覆盖率 include 规则由各模块自行设置；默认跳过（common/gateway 无测试） -->
     <jacoco.skip>true</jacoco.skip>
@@ -99,11 +98,6 @@
         <groupId>org.apache.rocketmq</groupId>
         <artifactId>rocketmq-acl</artifactId>
         <version>5.3.1</version>
-      </dependency>
-      <dependency>
-        <groupId>com.google.guava</groupId>
-        <artifactId>guava</artifactId>
-        <version>${guava.version}</version>
       </dependency>
       <dependency>
         <groupId>org.apache.commons</groupId>

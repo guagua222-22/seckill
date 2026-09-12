@@ -61,10 +61,17 @@
       <groupId>org.flywaydb</groupId>
       <artifactId>flyway-mysql</artifactId>
     </dependency>
-    <!-- Guava 本地布隆过滤器（单实例部署正确性没问题；多实例部署前须换 Redisson 分布式布隆，M6 做） -->
+    <!-- M6 Redisson 分布式布隆过滤器：多实例部署时 Guava 本地布隆各存一份会不一致
+         （A 实例新建的商品被 B 实例误判为"一定不存在"），换成 Redis bitmap 实现全集群共享。
+         顺带复用 Redisson 的连接工厂，与 seckill-service 的用法保持一致 -->
     <dependency>
-      <groupId>com.google.guava</groupId>
-      <artifactId>guava</artifactId>
+      <groupId>org.redisson</groupId>
+      <artifactId>redisson-spring-boot-starter</artifactId>
+    </dependency>
+    <!-- M6 热点隔离：热点商品详情走 JVM 本地缓存，摊薄 Redis 热点 key 的 QPS（版本由 Boot BOM 管理） -->
+    <dependency>
+      <groupId>com.github.ben-manes.caffeine</groupId>
+      <artifactId>caffeine</artifactId>
     </dependency>
     <dependency>
       <groupId>com.alibaba.cloud</groupId>

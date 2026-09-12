@@ -40,6 +40,12 @@ spring:
             # 可靠性靠 requestId 幂等 + MQ 重投 + 对账兜底，绝不靠 Feign 重试
             connect-timeout: 1000
             read-timeout: 2000
+    sentinel:
+      transport:
+        # 控制台只读：实时看 QPS/熔断状态，规则以代码 SentinelRuleConfig 为准
+        dashboard: localhost:8858
+      # 默认懒加载（第一个请求进来才注册），eager=true 让服务启动即上报控制台
+      eager: true
 
 mybatis-plus:
   configuration:
@@ -52,6 +58,15 @@ seckill:
   mq:
     topic: seckill-order-topic
     consumer-group: seckill-order-consumer
+  hot-cache:
+    # M6 热点隔离：活动信息在 JVM 内缓存一层（Caffeine）。
+    # seckill:activity:{id} 是全系统最热的 key——开抢时每一单都要读它，
+    # 本地缓存把同实例内的并发合并成一次 Redis GET + 一次 Jackson 反序列化。
+    # 只缓存活动配置（名字/时间窗/价格），库存永远走 Lua 现扣，超卖防线不依赖它；
+    # TTL 越大 Redis 压力越小，但活动配置改动的生效延迟同步变大
+    activity-ttl-ms: 1000
+    # 同时在售的活动是少数，256 条足够；超出按 Caffeine W-TinyLFU 淘汰
+    activity-max-size: 256
 
 rocketmq:
   name-server: localhost:9876

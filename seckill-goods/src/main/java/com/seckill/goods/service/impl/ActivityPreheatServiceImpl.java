@@ -3,6 +3,7 @@ package com.seckill.goods.service.impl;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.seckill.common.redis.RedisKeys;
+import com.seckill.goods.cache.HotGoodsLocalCache;
 import com.seckill.goods.entity.SeckillActivity;
 import com.seckill.goods.mapper.SeckillActivityMapper;
 import com.seckill.goods.service.ActivityPreheatService;
@@ -17,6 +18,7 @@ import java.time.LocalDateTime;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 
 /**
  * 活动预热实现。
@@ -31,6 +33,7 @@ public class ActivityPreheatServiceImpl implements ActivityPreheatService {
     private final StringRedisTemplate redis;
     private final ObjectMapper objectMapper;
     private final SeckillActivityMapper activityMapper;
+    private final HotGoodsLocalCache hotCache;
 
     @Override
     public void preheat(SeckillActivity activity) {
@@ -40,6 +43,11 @@ public class ActivityPreheatServiceImpl implements ActivityPreheatService {
                 String.valueOf(activity.getTotalStock()));
         if (Boolean.TRUE.equals(first)) {
             log.info("活动预热库存: activityId={}, stock={}", activity.getId(), activity.getTotalStock());
+        }
+
+        // 热点活动立即标记：本地缓存不等下一轮定时刷新（最多 30s）就生效
+        if (Integer.valueOf(1).equals(activity.getIsHot())) {
+            hotCache.markHot(activity.getGoodsId());
         }
 
         // 2. 活动信息：每次预热都刷新（时间窗可能有调整），TTL 到活动结束后 1 小时自动回收
@@ -68,6 +76,14 @@ public class ActivityPreheatServiceImpl implements ActivityPreheatService {
                         .le(SeckillActivity::getStartTime, now.plusMinutes(5))
                         .gt(SeckillActivity::getEndTime, now));
         activities.forEach(this::preheat);
+
+        // 热点商品集合整批替换：本轮扫到的活动就是"当前时间窗内该走本地缓存"的全集。
+        // 用替换而不是逐个 markHot 累加，活动结束或 isHot 被改回 0 后集合会自动收缩，
+        // 否则已经没人抢的商品会一直占着本地缓存、白白多出一层不一致窗口
+        hotCache.refreshHotIds(activities.stream()
+                .filter(a -> Integer.valueOf(1).equals(a.getIsHot()))
+                .map(SeckillActivity::getGoodsId)
+                .collect(Collectors.toSet()));
     }
 
     @SneakyThrows
