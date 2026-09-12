@@ -124,9 +124,15 @@ public class SeckillOrderServiceImpl implements SeckillOrderService {
         }
         switch (result.intValue()) {
             case 1 -> {
-                // 4. 组装消息（商品名快照走 Feign 取一次），事务落"流水+消息"
-                SeckillMessage message = buildMessage(dto, activity);
+                // 4. 组装消息（Feign 取商品名）+ 事务落"流水+消息"。
+                // M5 修复（实验2踩坑）：buildMessage 必须在回滚保护的 try 内——
+                // 它含 Feign 调用，依赖服务挂掉时会抛 BizException，若不回滚，
+                // Lua 已扣的库存和"已抢"标记会泄漏，用户看到报错却永远无法重试。
+                // asyncSend 必须留在 try 外：流水+消息已落库，发送失败由
+                // MessageResendJob 兜底重发，此时绝不能回滚预扣（订单仍会生成）。
+                SeckillMessage message;
                 try {
+                    message = buildMessage(dto, activity);
                     recordMessageWriter.write(dto.getRequestId(), dto.getUserId(),
                             dto.getActivityId(), topic, toJson(message));
                 } catch (DuplicateKeyException e) {
@@ -134,6 +140,8 @@ public class SeckillOrderServiceImpl implements SeckillOrderService {
                     rollbackPreDeduct(dto.getUserId(), activity.getId());
                     throw new BizException(ErrorCode.ALREADY_ORDERED, "排队中，请勿重复提交");
                 } catch (BizException e) {
+                    // 覆盖 buildMessage 的 Feign 失败与 write 的业务失败：
+                    // 一律回滚预扣再抛，保证"要么排队成功，要么完全没发生"
                     rollbackPreDeduct(dto.getUserId(), activity.getId());
                     throw e;
                 }
@@ -147,13 +155,18 @@ public class SeckillOrderServiceImpl implements SeckillOrderService {
                 FeignResultUtils.unwrap(goodsClient.preheat(activity.getId()));
                 Long retry = executePreDeduct(dto.getUserId(), activity.getId());
                 if (retry != null && retry.intValue() == 1) {
-                    SeckillMessage message = buildMessage(dto, activity);
+                    // 与 case 1 相同的回滚保护（buildMessage 在 try 内，asyncSend 在 try 外）
+                    SeckillMessage message;
                     try {
+                        message = buildMessage(dto, activity);
                         recordMessageWriter.write(dto.getRequestId(), dto.getUserId(),
                                 dto.getActivityId(), topic, toJson(message));
                     } catch (DuplicateKeyException e) {
                         rollbackPreDeduct(dto.getUserId(), activity.getId());
                         throw new BizException(ErrorCode.ALREADY_ORDERED, "排队中，请勿重复提交");
+                    } catch (BizException e) {
+                        rollbackPreDeduct(dto.getUserId(), activity.getId());
+                        throw e;
                     }
                     asyncSend(message);
                 } else if (retry != null && retry.intValue() == -1) {

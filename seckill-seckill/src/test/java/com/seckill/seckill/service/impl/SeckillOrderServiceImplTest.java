@@ -215,4 +215,24 @@ class SeckillOrderServiceImplTest {
         // Feign 返回的业务码原样透传
         assertEquals(ErrorCode.ACTIVITY_NOT_FOUND.getCode(), e.getCode());
     }
+
+    @Test
+    @DisplayName("M5 回归修复：Lua 成功后 buildMessage 的 Feign 失败 → 回滚预扣，不留幽灵扣减")
+    void buildMessageFeignFailureRollsBack() {
+        // Lua 预扣已成功（库存-1、用户进已抢集合）
+        when(redis.execute(any(DefaultRedisScript.class), anyList(), any(Object[].class))).thenReturn(1L);
+        // 商品名 Feign 失败（goods-service 挂掉的场景，ErrorDecoder 会转 BizException(500)）
+        when(goodsClient.goodsName(1L))
+                .thenThrow(new BizException(ErrorCode.INTERNAL_ERROR.getCode(), "依赖服务暂不可用"));
+
+        BizException e = assertThrows(BizException.class, () -> seckillOrderService.createOrder(dto()));
+        assertEquals(ErrorCode.INTERNAL_ERROR.getCode(), e.getCode());
+
+        // 关键断言：预扣必须回滚（实验2 的幽灵扣减就是这一步缺失导致的）
+        verify(stockRollback).rollback(1L, 100L);
+        // 且流水/消息都没写、MQ 没发——"要么排队成功，要么完全没发生"
+        verify(recordMessageWriter, never()).write(anyString(), any(), any(), anyString(), anyString());
+        verify(rocketMQTemplate, never()).asyncSend(anyString(), any(Object.class),
+                any(org.apache.rocketmq.client.producer.SendCallback.class));
+    }
 }
