@@ -1,0 +1,815 @@
+{
+  "uid": "seckill-m7",
+  "title": "秒杀系统 · M7 监控",
+  "tags": [
+    "seckill",
+    "M7"
+  ],
+  "schemaVersion": 39,
+  "version": 1,
+  "timezone": "browser",
+  "refresh": "15s",
+  "time": {
+    "from": "now-30m",
+    "to": "now"
+  },
+  "editable": true,
+  "templating": {
+    "list": [
+      {
+        "name": "application",
+        "label": "服务",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "seckill-prometheus"
+        },
+        "query": "label_values(up{job=\"seckill-services\"}, application)",
+        "refresh": 1,
+        "multi": true,
+        "includeAll": true,
+        "allValue": ".*",
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        }
+      },
+      {
+        "name": "instance",
+        "label": "实例",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "seckill-prometheus"
+        },
+        "query": "label_values(up{job=\"seckill-services\",application=~\"$application\"}, instance)",
+        "refresh": 1,
+        "multi": true,
+        "includeAll": true,
+        "allValue": ".*",
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        }
+      },
+      {
+        "name": "activity",
+        "label": "库存活动",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "seckill-prometheus"
+        },
+        "query": "label_values(seckill_stock_remaining, activity_id)",
+        "refresh": 1,
+        "multi": true,
+        "includeAll": true,
+        "allValue": ".*",
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "实例抓取状态（1 在线 / 0 失败）",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "seckill-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 0
+      },
+      "description": "up 表示管理端点可抓取，不等于所有业务依赖都健康。每个 JVM 必须有独立 target。",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "up{job=\"seckill-services\",application=~\"$application\",instance=~\"$instance\"}",
+          "legendFormat": "{{application}} / {{instance}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "seckill-prometheus"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 2,
+      "title": "业务 API QPS（按服务）",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "seckill-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 0
+      },
+      "description": "仅计算 /api/ 请求。网关和下游是同一次请求的两个观测点，不要把不同服务 QPS 相加当作用户 QPS。",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (application) (rate(http_server_requests_seconds_count{job=\"seckill-services\",application=~\"$application\",instance=~\"$instance\",uri=~\"/api/.*\"}[$__rate_interval]))",
+          "legendFormat": "{{application}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "seckill-prometheus"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": {
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 3,
+      "title": "HTTP 平均 RT",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "seckill-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 8
+      },
+      "description": "按总耗时/总请求数加权，不能直接平均实例的平均 RT；没有请求时留空。",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (application) (rate(http_server_requests_seconds_sum{job=\"seckill-services\",application=~\"$application\",instance=~\"$instance\",uri=~\"/api/.*\"}[$__rate_interval])) / sum by (application) (rate(http_server_requests_seconds_count{job=\"seckill-services\",application=~\"$application\",instance=~\"$instance\",uri=~\"/api/.*\"}[$__rate_interval]))",
+          "legendFormat": "{{application}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "seckill-prometheus"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 4,
+      "title": "HTTP P95 / P99 RT",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "seckill-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 8
+      },
+      "description": "先合并各实例直方图桶，再估算分位数。入口 RT 截止接口返回，不含 MQ 后续异步落单时间。",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.95, sum by (application, le) (rate(http_server_requests_seconds_bucket{job=\"seckill-services\",application=~\"$application\",instance=~\"$instance\",uri=~\"/api/.*\"}[$__rate_interval])))",
+          "legendFormat": "{{application}} P95",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "seckill-prometheus"
+          }
+        },
+        {
+          "refId": "B",
+          "expr": "histogram_quantile(0.99, sum by (application, le) (rate(http_server_requests_seconds_bucket{job=\"seckill-services\",application=~\"$application\",instance=~\"$instance\",uri=~\"/api/.*\"}[$__rate_interval])))",
+          "legendFormat": "{{application}} P99",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "seckill-prometheus"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 5,
+      "title": "接口 QPS（按模板路径）",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "seckill-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 16
+      },
+      "description": "路径模板例如 /api/goods/{id}，不会为每个商品 ID 创建时间序列。",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (application, uri) (rate(http_server_requests_seconds_count{job=\"seckill-services\",application=~\"$application\",instance=~\"$instance\",uri=~\"/api/.*\"}[$__rate_interval]))",
+          "legendFormat": "{{application}} {{uri}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "seckill-prometheus"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": {
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 6,
+      "title": "HTTP 5xx 比例",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "seckill-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 16
+      },
+      "description": "HTTP 200 内的业务失败不计入此图；应结合下方准入业务码和 Sentinel 拒绝指标。",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (application) (rate(http_server_requests_seconds_count{job=\"seckill-services\",application=~\"$application\",instance=~\"$instance\",uri=~\"/api/.*\",status=~\"5..\"}[$__rate_interval])) / sum by (application) (rate(http_server_requests_seconds_count{job=\"seckill-services\",application=~\"$application\",instance=~\"$instance\",uri=~\"/api/.*\"}[$__rate_interval]))",
+          "legendFormat": "{{application}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "seckill-prometheus"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "custom": {
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 7,
+      "title": "秒杀入口结果（业务码 / 秒）",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "seckill-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 24
+      },
+      "description": "0=入口成功返回（通常排队中，DB 降级时同步完成），429=限流，503=依赖降级，2004=库存不足，3002=重复，500=系统错误。参数校验未进入方法的不计入。此图不是最终订单成功率。",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (code) (rate(seckill_order_admission_total{job=\"seckill-services\",application=~\"$application\",instance=~\"$instance\"}[$__rate_interval]))",
+          "legendFormat": "code={{code}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "seckill-prometheus"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": {
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 8,
+      "title": "网关限流拒绝（次 / 秒）",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "seckill-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 24
+      },
+      "description": "在网关实际拒绝响应回调计数；被网关拒绝的请求不会再进入秒杀服务。",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (route) (rate(seckill_gateway_blocked_total{job=\"seckill-services\",application=~\"$application\",instance=~\"$instance\"}[$__rate_interval]))",
+          "legendFormat": "{{route}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "seckill-prometheus"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "custom": {
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 9,
+      "title": "服务 Sentinel 拒绝（次 / 秒）",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "seckill-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 32
+      },
+      "description": "flow=总 QPS，hotspot=热点参数，degrade=熔断。来自真实拒绝回调，非控制台轮询；依赖熔断事件不要与入口限流重复理解为独立用户请求。",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (resource, reason) (rate(seckill_sentinel_blocked_total{job=\"seckill-services\",application=~\"$application\",instance=~\"$instance\"}[$__rate_interval]))",
+          "legendFormat": "{{resource}} / {{reason}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "seckill-prometheus"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "custom": {
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 10,
+      "title": "Caffeine 窗口命中率",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "seckill-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 32
+      },
+      "description": "统计最近窗口 hit/(hit+miss)，按请求量加权合并实例；没有缓存访问显示无数据，不能伪造 100%。",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (application, cache) (rate(cache_gets_total{job=\"seckill-services\",application=~\"$application\",instance=~\"$instance\",result=\"hit\"}[$__rate_interval])) / sum by (application, cache) (rate(cache_gets_total{job=\"seckill-services\",application=~\"$application\",instance=~\"$instance\"}[$__rate_interval]))",
+          "legendFormat": "{{application}} / {{cache}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "seckill-prometheus"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "custom": {
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 11,
+      "title": "Caffeine 条目数（逐实例）",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "seckill-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 40
+      },
+      "description": "本地缓存每个实例各有一份，大小不是共享 Redis 的 key 数。",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "cache_size{job=\"seckill-services\",application=~\"$application\",instance=~\"$instance\"}",
+          "legendFormat": "{{application}} {{instance}} / {{cache}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "seckill-prometheus"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 12,
+      "title": "Redis 剩余准入库存（白名单活动）",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "seckill-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 40
+      },
+      "description": "Redis Lua 准入库存快照，约 15 秒采集一次；不是数据库最终库存。共享库存跨实例取 max 去重，不能 sum。-1=未预热，空白/NaN=未采集或失败；需结合采集状态/新鲜度。",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "max by (activity_id) (seckill_stock_remaining{job=\"seckill-services\",application=~\"$application\",instance=~\"$instance\",activity_id=~\"$activity\"})",
+          "legendFormat": "活动 {{activity_id}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "seckill-prometheus"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 13,
+      "title": "库存采集状态 / 配置活动数",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "seckill-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 48
+      },
+      "description": "活动数 0 表示未配置白名单，采集关闭；活动数>0 且状态0 才是采集未成功。",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "seckill_stock_collection_up{job=\"seckill-services\",application=~\"$application\",instance=~\"$instance\"}",
+          "legendFormat": "{{instance}} 采集状态",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "seckill-prometheus"
+          }
+        },
+        {
+          "refId": "B",
+          "expr": "seckill_stock_monitored_activities{job=\"seckill-services\",application=~\"$application\",instance=~\"$instance\"}",
+          "legendFormat": "{{instance}} 配置活动数",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "seckill-prometheus"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 14,
+      "title": "库存快照距今秒数",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "seckill-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 48
+      },
+      "description": "正常约 0~30 秒；持续增长说明 Redis 失败或采集定时任务被阻塞，不能把旧库存当作实时值。",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "time() - seckill_stock_collection_last_success_timestamp_seconds{job=\"seckill-services\",application=~\"$application\",instance=~\"$instance\"}",
+          "legendFormat": "{{instance}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "seckill-prometheus"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 15,
+      "title": "JVM 堆使用量",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "seckill-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 56
+      },
+      "description": "",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (application, instance) (jvm_memory_used_bytes{job=\"seckill-services\",application=~\"$application\",instance=~\"$instance\",area=\"heap\"})",
+          "legendFormat": "{{application}} / {{instance}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "seckill-prometheus"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "custom": {
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 16,
+      "title": "当前告警（pending / firing）",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "seckill-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 56
+      },
+      "description": "告警由 Prometheus 规则计算；此面板看全部 M7 告警，不受上方实例筛选影响。当前未接邮件/群通知。",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "ALERTS{alertname=~\"Seckill.*\",alertstate=~\"pending|firing\"}",
+          "legendFormat": "{{alertname}} {{application}} {{instance}} / {{alertstate}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "seckill-prometheus"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    }
+  ]
+}

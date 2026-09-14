@@ -4,7 +4,7 @@
 
 ## 当前阶段
 
-M6：稳定性防线（已完成）——Sentinel 限流/熔断/热点参数 + Caffeine 多级缓存热点隔离 + Redisson 分布式布隆 + 多实例压测验收
+M7：监控（已完成）——Micrometer 埋点 + Prometheus 独立抓取四个服务 + Grafana 16 面板 + 5 条基础告警。启动、实验步骤、指标口径和面试讲解见 [M7 监控学习文档](docs/M7-monitoring.md)。M6 稳定性防线继续保留，M8 README/简历整理尚未开始。
 
 ## 架构总览
 
@@ -242,7 +242,7 @@ bash scripts/sentinel-dashboard.sh --bg     # 后台，日志 /tmp/sentinel-dash
 node scripts/loadtest/load.mjs --mode detail --base http://localhost:8080 --goods <id> --total 10000 --concurrency 100
 ```
 
-- 单测：user 6 + goods 34 + seckill 49 = 89（Lua 并发脚本测试直连 Redis db15，需 redis 容器在跑）
+- 单测：user 6 + goods 35 + seckill 58 + gateway 1 = 100（Lua 并发脚本测试直连 Redis db15，需 redis 容器在跑）；M7 另有 Prometheus 告警规则测试及只读联调脚本。
 - e2e：JDK HttpClient 直连网关，走"网关→Nacos→服务→MQ→三库"真实路径；环境未起自动跳过
 - 覆盖率：三业务服务 service 层 LINE ≥ 60%
 - Sentinel 规则是 **JVM 全局静态状态**，每个用到规则的测试类必须在 `@AfterEach` 里 `loadRules(List.of())` 清空，否则污染同批次其他测试

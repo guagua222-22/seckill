@@ -6,3 +6,4 @@ logs/
 *.log
 HELP.md
 .DS_Store
+.env.monitoring

@@ -19,6 +19,8 @@ import org.springframework.web.server.ServerWebExchange;
 import org.springframework.web.reactive.function.server.ServerResponse;
 import org.springframework.http.codec.ServerCodecConfigurer;
 import reactor.core.publisher.Mono;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
 
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -47,6 +49,13 @@ import java.util.Set;
 @Configuration
 public class SentinelGatewayConfig implements SmartInitializingSingleton {
 
+    private final Counter blocked;
+
+    public SentinelGatewayConfig(MeterRegistry registry) {
+        // 当前唯一网关规则是 seckill-service。只使用固定标签，禁止请求 URL/ID 入标签。
+        blocked = registry.counter("seckill.gateway.blocked", "route", "seckill-service");
+    }
+
     /** 秒杀路由的入口 QPS 上限：比服务内总闸（2000×实例数）略高，只挡异常洪峰 */
     @Value("${gateway.sentinel.seckill-route-qps:5000}")
     private long seckillRouteQps;
@@ -64,6 +73,7 @@ public class SentinelGatewayConfig implements SmartInitializingSingleton {
 
     /** 限流响应与业务 Result 同构（code/message/data），验证台日志能直接显示原因 */
     private Mono<ServerResponse> blockedResponse(ServerWebExchange exchange, Throwable t) {
+        blocked.increment();
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("code", 429);
         body.put("message", "请求太火爆，请稍后再试");

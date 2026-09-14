@@ -37,7 +37,9 @@ class SeckillControllerTest {
 
     @BeforeEach
     void setUp() {
-        controller = new SeckillController(seckillOrderService);
+        controller = new SeckillController(seckillOrderService,
+                new com.seckill.seckill.metrics.OrderAdmissionMetrics(
+                        new io.micrometer.core.instrument.simple.SimpleMeterRegistry()));
     }
 
     @AfterEach

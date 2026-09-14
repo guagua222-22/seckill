@@ -16,6 +16,11 @@
   <description>网关：Spring Cloud Gateway + Nacos 服务发现，统一入口 8080</description>
 
   <dependencies>
+    <!-- M7：版本由 Spring Boot BOM 管理，与 Micrometer core 保持一致。 -->
+    <dependency>
+      <groupId>io.micrometer</groupId>
+      <artifactId>micrometer-registry-prometheus</artifactId>
+    </dependency>
     <!-- 依赖纪律：只加 gateway/webflux 系依赖，严禁 starter-web 或 seckill-common
          （common 传递 starter-web，与 webflux 冲突，启动即挂）。
          网关纯转发字节流，不解析 body，不需要 JacksonConfig -->

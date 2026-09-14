@@ -2,6 +2,7 @@ package com.seckill.seckill.cache;
 
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
+import com.github.benmanes.caffeine.cache.stats.CacheStats;
 import com.seckill.common.api.goods.ActivityInfoDTO;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
@@ -39,6 +40,7 @@ public class HotActivityLocalCache {
         this.local = Caffeine.newBuilder()
                 .maximumSize(maxSize)
                 .expireAfterWrite(Duration.ofMillis(ttlMillis))
+                .recordStats()
                 .build();
     }
 
@@ -53,5 +55,15 @@ public class HotActivityLocalCache {
     /** 活动配置变更时主动失效，把脏读窗口从 ttl 压到 0（当前由 goods 侧改动触发，预留接口） */
     public void invalidate(Long activityId) {
         local.invalidate(activityId);
+    }
+
+    /** M6 实验台用：当前条目数 + 命中率统计 */
+    public CacheStats stats() {
+        return local.stats();
+    }
+
+    /** M6 实验台用：缓存实例引用（面板轮询 estimatedSize 不需要 stats 开销） */
+    public Cache<Long, ActivityInfoDTO> asCache() {
+        return local;
     }
 }

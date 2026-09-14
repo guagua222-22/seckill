@@ -43,6 +43,7 @@ public class HotGoodsLocalCache {
         this.local = Caffeine.newBuilder()
                 .maximumSize(maxSize)
                 .expireAfterWrite(Duration.ofSeconds(ttlSeconds))
+                .recordStats()
                 .build();
     }
 
@@ -71,5 +72,10 @@ public class HotGoodsLocalCache {
     /** 商品改名/下架时失效：本地缓存最多脏 TTL 秒，写操作主动清掉把窗口缩到 0 */
     public void invalidate(Long goodsId) {
         local.invalidate(goodsId);
+    }
+
+    /** M7：Micrometer 绑定累计 hit/miss，由 PromQL rate 计算窗口命中率。 */
+    public Cache<Long, CachedGoodsVO> asCache() {
+        return local;
     }
 }

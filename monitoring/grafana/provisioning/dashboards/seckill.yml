@@ -1,0 +1,11 @@
+apiVersion: 1
+providers:
+  - name: seckill-m7
+    folder: Seckill
+    type: file
+    disableDeletion: true
+    # 配置以 Git 文件为准，学习修改看板后应导出 JSON 回仓库。
+    allowUiUpdates: false
+    updateIntervalSeconds: 30
+    options:
+      path: /var/lib/grafana/dashboards

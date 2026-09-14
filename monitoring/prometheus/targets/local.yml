@@ -1,0 +1,14 @@
+# 每个 JVM 独立抓取，不能抓 Gateway 转发后的同一个地址，否则漏实例并丢失 instance 维度。
+# 同机增加第二秒杀实例时：设置业务端口 8084、管理端口 19084，再把管理地址加到 targets 中。
+- targets: ['host.docker.internal:19080']
+  labels:
+    application: gateway-service
+- targets: ['host.docker.internal:19081']
+  labels:
+    application: user-service
+- targets: ['host.docker.internal:19082']
+  labels:
+    application: goods-service
+- targets: ['host.docker.internal:19083']
+  labels:
+    application: seckill-service

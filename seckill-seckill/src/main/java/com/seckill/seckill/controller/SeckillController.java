@@ -6,6 +6,7 @@ import com.seckill.seckill.config.SentinelRuleConfig;
 import com.seckill.seckill.dto.SeckillOrderDTO;
 import com.seckill.seckill.sentinel.SentinelGuard;
 import com.seckill.seckill.service.SeckillOrderService;
+import com.seckill.seckill.metrics.OrderAdmissionMetrics;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -26,6 +27,7 @@ import org.springframework.web.bind.annotation.RestController;
 public class SeckillController {
 
     private final SeckillOrderService seckillOrderService;
+    private final OrderAdmissionMetrics admissionMetrics;
 
     /**
      * M4 起为异步排队模式：立即返回"排队中"（code=0），
@@ -37,12 +39,12 @@ public class SeckillController {
     @PostMapping("/order")
     public Result<Void> order(@Valid @RequestBody SeckillOrderDTO dto) {
         // 手动埋点而非注解：热点参数是 DTO 里的 activityId，注解按形参下标取不到嵌套字段
-        SentinelGuard.call(SentinelRuleConfig.RES_CREATE_ORDER, ErrorCode.RATE_LIMITED,
+        admissionMetrics.record(() -> SentinelGuard.call(SentinelRuleConfig.RES_CREATE_ORDER, ErrorCode.RATE_LIMITED,
                 () -> {
                     seckillOrderService.createOrder(dto);
                     return null;
                 },
-                dto.getActivityId());
+                dto.getActivityId()));
         return Result.ok();
     }
 

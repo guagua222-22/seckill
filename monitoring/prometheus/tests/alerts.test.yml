@@ -1,0 +1,118 @@
+rule_files:
+  - /etc/prometheus/alerts.yml
+evaluation_interval: 15s
+tests:
+  # 短暂失败不报警；持续失败进入 firing；恢复后告警消失。
+  - name: instance-down-and-recovery
+    interval: 15s
+    input_series:
+      - series: 'up{job="seckill-services",application="seckill-service",instance="test:19083"}'
+        values: '1 0 0 0 0 0 1 1'
+    alert_rule_test:
+      - eval_time: 45s
+        alertname: SeckillInstanceDown
+        exp_alerts: []
+      - eval_time: 75s
+        alertname: SeckillInstanceDown
+        exp_alerts:
+          - exp_labels:
+              job: seckill-services
+              application: seckill-service
+              instance: test:19083
+              severity: critical
+            exp_annotations:
+              summary: '服务实例连续 1 分钟无法抓取'
+              description: '检查 seckill-service / test:19083 的进程、管理端口和网络。up=0 不等于已证明业务进程宕机。'
+      - eval_time: 90s
+        alertname: SeckillInstanceDown
+        exp_alerts: []
+  # 未配置活动不能误报 Redis 故障。
+  - name: stock-disabled-is-not-failure
+    interval: 15s
+    input_series:
+      - series: 'seckill_stock_collection_up{job="seckill-services",application="seckill-service",instance="test:19083"}'
+        values: '0+0x12'
+      - series: 'seckill_stock_monitored_activities{job="seckill-services",application="seckill-service",instance="test:19083"}'
+        values: '0+0x12'
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: SeckillStockCollectionFailed
+        exp_alerts: []
+  - name: stock-configured-but-failing
+    interval: 15s
+    input_series:
+      - series: 'seckill_stock_collection_up{job="seckill-services",application="seckill-service",instance="test:19083"}'
+        values: '0+0x12'
+      - series: 'seckill_stock_monitored_activities{job="seckill-services",application="seckill-service",instance="test:19083"}'
+        values: '1+0x12'
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: SeckillStockCollectionFailed
+        exp_alerts:
+          - exp_labels:
+              job: seckill-services
+              application: seckill-service
+              instance: test:19083
+              severity: warning
+            exp_annotations:
+              summary: '库存采集连续失败，库存数值当前不可用'
+  - name: latency-errors-and-stale-snapshot
+    interval: 15s
+    input_series:
+      # 10 QPS，所有请求落在 500ms~1s 桶，P95 约 975ms。
+      - series: 'http_server_requests_seconds_bucket{job="seckill-services",application="seckill-service",uri="/api/seckill/order",le="0.5"}'
+        values: '0+0x24'
+      - series: 'http_server_requests_seconds_bucket{job="seckill-services",application="seckill-service",uri="/api/seckill/order",le="1"}'
+        values: '0+150x24'
+      - series: 'http_server_requests_seconds_bucket{job="seckill-services",application="seckill-service",uri="/api/seckill/order",le="+Inf"}'
+        values: '0+150x24'
+      - series: 'http_server_requests_seconds_count{job="seckill-services",application="seckill-service",uri="/api/seckill/order"}'
+        values: '0+150x24'
+      - series: 'seckill_order_admission_total{job="seckill-services",application="seckill-service",code="500"}'
+        values: '0+30x24'
+      - series: 'seckill_stock_collection_last_success_timestamp_seconds{job="seckill-services",application="seckill-service",instance="test:19083"}'
+        values: '0+0x24'
+      - series: 'seckill_stock_monitored_activities{job="seckill-services",application="seckill-service",instance="test:19083"}'
+        values: '1+0x24'
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: SeckillHttpP95High
+        exp_alerts:
+          - exp_labels:
+              application: seckill-service
+              severity: warning
+            exp_annotations:
+              summary: '业务接口 P95 连续 2 分钟超过 500ms'
+      - eval_time: 4m
+        alertname: SeckillAdmissionInternalErrors
+        exp_alerts:
+          - exp_labels:
+              application: seckill-service
+              severity: warning
+            exp_annotations:
+              summary: '秒杀入口系统错误持续超过 1 次/秒（含 HTTP 200 内的业务 500）'
+      - eval_time: 4m
+        alertname: SeckillStockSnapshotStale
+        exp_alerts:
+          - exp_labels:
+              job: seckill-services
+              application: seckill-service
+              instance: test:19083
+              severity: warning
+            exp_annotations:
+              summary: '库存快照长时间未更新，检查定时任务是否阻塞'
+  - name: low-traffic-does-not-trigger-p95
+    interval: 15s
+    input_series:
+      - series: 'http_server_requests_seconds_bucket{job="seckill-services",application="seckill-service",uri="/api/seckill/order",le="0.5"}'
+        values: '0+0x24'
+      - series: 'http_server_requests_seconds_bucket{job="seckill-services",application="seckill-service",uri="/api/seckill/order",le="1"}'
+        values: '0+1x24'
+      - series: 'http_server_requests_seconds_bucket{job="seckill-services",application="seckill-service",uri="/api/seckill/order",le="+Inf"}'
+        values: '0+1x24'
+      - series: 'http_server_requests_seconds_count{job="seckill-services",application="seckill-service",uri="/api/seckill/order"}'
+        values: '0+1x24'
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: SeckillHttpP95High
+        exp_alerts: []

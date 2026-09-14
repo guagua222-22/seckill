@@ -1,0 +1,55 @@
+# 起始阈值用于学习实验，正式阈值需基于容量压测和业务 SLO 调整。
+# 这里只评估 pending/firing 状态；没有 Alertmanager，不会向外发送通知。
+groups:
+  - name: seckill-m7
+    rules:
+      - alert: SeckillInstanceDown
+        expr: up{job="seckill-services"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: '服务实例连续 1 分钟无法抓取'
+          description: '检查 {{ $labels.application }} / {{ $labels.instance }} 的进程、管理端口和网络。up=0 不等于已证明业务进程宕机。'
+
+      - alert: SeckillHttpP95High
+        # 先合并 histogram 桶再求分位数；不能平均各实例 P95。低于 1 QPS 不触发，减少小样本噪声。
+        expr: |
+          (histogram_quantile(0.95, sum by (application, le) (rate(http_server_requests_seconds_bucket{job="seckill-services",uri=~"/api/.*"}[5m]))) > 0.5)
+          and on (application)
+          (sum by (application) (rate(http_server_requests_seconds_count{job="seckill-services",uri=~"/api/.*"}[5m])) > 1)
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: '业务接口 P95 连续 2 分钟超过 500ms'
+
+      - alert: SeckillStockCollectionFailed
+        expr: |
+          (seckill_stock_collection_up{job="seckill-services"} == 0)
+          and on (application, instance)
+          (seckill_stock_monitored_activities{job="seckill-services"} > 0)
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: '库存采集连续失败，库存数值当前不可用'
+
+      - alert: SeckillStockSnapshotStale
+        expr: |
+          (time() - seckill_stock_collection_last_success_timestamp_seconds{job="seckill-services"} > 60)
+          and on (application, instance)
+          (seckill_stock_monitored_activities{job="seckill-services"} > 0)
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: '库存快照长时间未更新，检查定时任务是否阻塞'
+
+      - alert: SeckillAdmissionInternalErrors
+        expr: sum by (application) (rate(seckill_order_admission_total{job="seckill-services",code="500"}[5m])) > 1
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: '秒杀入口系统错误持续超过 1 次/秒（含 HTTP 200 内的业务 500）'
