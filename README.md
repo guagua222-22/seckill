@@ -1,276 +1,163 @@
-# 秒杀系统（seckill）
+# 秒杀系统 · Seckill
 
-生产级秒杀系统，微服务架构（Spring Cloud Alibaba）。按「先单体、后微服务」路线演进：M1-M4 以单体跑通核心链路，M5 完成微服务拆分，M6 补齐高并发下的稳定性防线。
+面向秋招学习的 Java 高并发交易项目：从数据库条件扣库存演进到 Redis Lua 预扣、RocketMQ 异步落单，再拆为 Spring Cloud Alibaba 微服务，补充限流、热点缓存和监控。M0–M8 的计划交付已完成；这是一套可运行、可解释、可继续验证的工程实现，**不把学习环境的功能验证等同于真实生产上线认证**。
 
-## 当前阶段
+## 从哪里开始
 
-M7：监控（已完成）——Micrometer 埋点 + Prometheus 独立抓取四个服务 + Grafana 16 面板 + 5 条基础告警。启动、实验步骤、指标口径和面试讲解见 [M7 监控学习文档](docs/M7-monitoring.md)。M6 稳定性防线继续保留，M8 README/简历整理尚未开始。
+| 你想做什么 | 入口 |
+|---|---|
+| 一条命令启动、停止、查状态 | [本机运行手册](docs/runbook.md) |
+| 看架构、事务边界与完整下单过程 | [架构和链路](docs/architecture.md) |
+| 核对压测数字、理解统计口径、自己复测 | [性能与证据](docs/performance.md) |
+| 准备两分钟介绍、面试追问、简历描述 | [秋招讲解与简历](docs/interview.md) |
+| 学 Micrometer / Prometheus / Grafana | [M7 监控实战](docs/M7-monitoring.md) |
+| 看当前已知缺口和上线前验证项 | [边界与待办](docs/known-limitations.md) |
+| 核对 M8 本轮做了什么、验证到哪里 | [M8 验收记录](docs/M8-validation.md) |
 
-## 架构总览
+## 架构
 
-```
-                     ┌────────────────────┐
-   浏览器 :8080 ────► │      Gateway       │ 入口总闸：GatewayFlowRule 按路由限 QPS，超限直接 429
-   （验证台静态页）   │     (webflux)      │
-                     └─────────┬──────────┘
-          /api/user/**  ┌──────┴──────┐  /api/seckill/**
-       /api/goods/**    │             │  /api/order/**
-              ┌─────────▼──┐   ┌──────▼────────┐
-              │   goods    │   │    seckill    │  实例自保：Sentinel 流控 + 热点参数 + 熔断
-              │ 8082 ×N    │◄──┤  8083 ×N      │  热点隔离：Caffeine 本地缓存挡在 Redis 前
-              └─────┬──────┘Feign└──────┬──────┘  （压测实例：goods 8092 / seckill 8093）
-              ┌─────▼──────┐   lb://    │
-              │ user  8081 │◄───────────┘
-              └─────┬──────┘
-              ┌─────▼────────────────────────────────────────────┐
-              │ Nacos :8848   服务注册/发现（LoadBalancer 轮询）    │
-              ├──────────────────────────────────────────────────┤
-              │ Redis :6379   Lua 预扣/活动缓存/预热契约/分布式布隆  │
-              │ RocketMQ :9876（只有 seckill-service 用）          │
-              │ MySQL :3307   seckill_user / _goods / _seckill    │
-              └──────────────────────────────────────────────────┘
-```
-
-两层限流职责不同：**网关**保护的是整个入口带宽（流量大到网关/下游连接池先撑不住时，服务内规则还来不及生效），**服务内 FlowRule**保护的是单个实例的 DB/MQ。
-
-| 模块 | 端口 | 数据库 | 职责 |
-|---|---|---|---|
-| seckill-common | - | - | 统一返回/错误码/异常/Jackson/MyBatis 配置/Feign 契约 DTO/Redis key 契约 |
-| seckill-gateway | 8080 | - | 统一入口：路由分发 + 前端静态页转发 + 入口 QPS 限流（webflux，禁引 common） |
-| seckill-user | 8081 | seckill_user | 注册/登录（BCrypt）+ 内部用户存在性接口 |
-| seckill-goods | 8082 | seckill_goods | 商品/活动 CRUD、缓存三件套 + 分布式布隆 + 热点本地缓存、预热/对账、内部库存扣减（幂等流水） |
-| seckill-seckill | 8083 | seckill_seckill | Lua 预扣、MQ 异步落单、本地消息表、订单域、前端验证台、Sentinel 规则 + 活动本地缓存 |
-
-**跨服务铁律**：只能走对方 service/controller 接口（Feign），禁止跨服务访问 mapper/数据库。
-内部接口前缀 `/internal`，网关不路由（外部不可达），Feign 走 `lb://` 直连。
-
-## 快速启动
-
-```bash
-# 1. 启动中间件（MySQL 8.0.36 :3307 + Redis + RocketMQ 4.9.4 + Nacos 2.3.2）
-docker compose up -d
-
-# 2. 启动 4 个应用（各开一个终端，或 IDEA 里跑 4 个启动类）
-./mvnw -pl seckill-user spring-boot:run
-./mvnw -pl seckill-goods spring-boot:run
-./mvnw -pl seckill-seckill spring-boot:run
-./mvnw -pl seckill-gateway spring-boot:run
-
-# 3. 浏览器打开 http://localhost:8080/（验证台前端）
-#    Nacos 控制台 http://localhost:8848/nacos（查看服务注册）
-#    健康检查 curl http://localhost:8080/actuator/health
-
-# 4.（可选）Sentinel 控制台：看实时 QPS / 被拦数量 / 熔断状态，不起也不影响限流
-bash scripts/sentinel-dashboard.sh --bg     # http://localhost:8858 ，账号密码都是 sentinel
+```mermaid
+flowchart TB
+    Client[浏览器 / 压测客户端] --> GW[Gateway :8080 路由级 Sentinel]
+    GW --> User[user-service :8081]
+    GW --> Goods[goods-service :8082 商品 / 活动 / 库存]
+    GW --> SK[seckill-service :8083 准入 / 订单 / 消息]
+    SK -->|Feign 用户校验与用户名| User
+    SK -->|Feign 活动兜底 / 库存操作| Goods
+    Goods --> GC[Caffeine 商品基础信息]
+    SK --> AC[Caffeine 活动配置]
+    GC --> Redis[(Redis 缓存 / 布隆 / Lua 库存 / 去重 / 锁)]
+    AC --> Redis
+    User --> UDB[(seckill_user)]
+    Goods --> GDB[(seckill_goods)]
+    SK --> SDB[(seckill_seckill)]
+    SK -->|提交本地流水与消息后发送| MQ[RocketMQ]
+    MQ -->|异步消费| SK
+    Nacos[Nacos 注册发现] -.-> GW
+    Nacos -.-> SK
+    Prom[Prometheus] -->|19080–19083 独立抓取| GW
+    Prom --> User
+    Prom --> Goods
+    Prom --> SK
+    Grafana[Grafana :3000] --> Prom
 ```
 
-> 首次拆分（从旧单体升级）需一次性执行建库与数据迁移，见 `scripts/db/`。
+三个业务库位于同一台本地 MySQL，但按服务划分表所有权；跨服务通过 Feign 调用，不跨库 join。Gateway 使用 WebFlux，不能引入传递 Servlet Web 依赖的 `seckill-common`。
 
-## 接口清单（全部经网关 8080）
-
-| 接口 | 服务 | 说明 |
+| 模块 | 业务端口 / 管理端口 | 数据所有权 |
 |---|---|---|
-| POST /api/user/register | user | 注册（BCrypt，用户名唯一） |
-| POST /api/user/login | user | 登录 |
-| POST /api/goods | goods | 创建商品 |
-| GET /api/goods/{id} | goods | 商品详情（缓存三件套） |
-| GET /api/goods/page | goods | 商品分页 |
-| POST /api/goods/activity | goods | 创建秒杀活动（灌库存+预热） |
-| GET /api/goods/activity/page | goods | 活动分页 |
-| POST /api/seckill/order | seckill | 秒杀下单（Lua 预扣→本地消息表→MQ 异步落单） |
-| GET /api/seckill/stock/{activityId} | seckill | Redis 实时剩余库存 |
-| GET /api/order/query?requestId= | seckill | 按请求 ID 查单 |
+| seckill-common | 无 | 错误码、DTO、序列化、Redis key 等公共契约 |
+| seckill-user | 8081 / 19081 | `t_user` |
+| seckill-goods | 8082 / 19082 | `t_goods`、`t_stock`、`t_seckill_activity`、`t_stock_operation` |
+| seckill-seckill | 8083 / 19083 | `t_order`、`t_seckill_record`、`t_local_message` |
+| seckill-gateway | 8080 / 19080 | 无业务库，路由与入口保护 |
 
-统一响应 `{"code":0,"message":"success","data":...}`；错误码见 `seckill-common` 的 `ErrorCode`（跨服务原码透传）。
+管理端口仅在 `monitoring` profile 启用。内部 `/internal/**` 不配置 Gateway 路由；直接服务端口在本地仍可访问，路由隔离不能替代认证。
 
-## 核心链路与防超卖（M2-M4 沉淀，M5 跨服务化）
+## 一键启动（Windows）
 
-1. **快闸门**：Redis Lua 原子预扣（判重→判库存→扣减→登记，返回 1/-1/-2/-3）
-2. **可靠消息**：流水 + 本地消息表同事务落库 → asyncSend → 失败由 `MessageResendJob`（30s）补偿
-3. **消费幂等三层**：SETNX 去重（命中后查流水状态，排队中重入处理）→ Redisson 用户锁 → DB 唯一索引
-4. **跨库补偿**（M5 新增）：`t_stock_operation` 幂等流水——扣库存与流水同事务、requestId 唯一键，
-   Feign 重试/MQ 重投不重复扣减；先扣库存后插单，冲突同步补偿 + 对账兜底
-5. **对账任务**：`StockReconcileJob`（库存对账）、`RecordReconcileJob`（流水对账，含 DB 库存补偿）
-6. **降级**：Redis 整体不可用 → DB 同步直写（条件更新 + 唯一索引兜底）
+前置：JDK 21 在 PATH、Docker Desktop 的 Linux engine 已运行、支持 `docker compose up --wait` 的 Compose、PowerShell 5.1 或 7。首次需下载 Maven 依赖和镜像；Node.js 18+ 仅在运行压测脚本时需要。
 
-### 缓存三件套（goods-service，商品详情）
-
-穿透（Redisson 分布式布隆 + 空值缓存）/ 击穿（逻辑过期 + SETNX 互斥重建）/ 雪崩（TTL 30min ± 随机）。
-> M6 把布隆从 Guava 本地版换成 Redisson bitmap（`goods:bloom:ids`）。本地布隆在多实例下是个反向事故：
-> A 实例创建的新商品只进了 A 的过滤器，请求被负载均衡打到 B 时会被判成"一定不存在"直接 404——
-> 布隆"绝不误漏"的特性被用反了方向。`tryInit` 幂等，只有首个启动的实例做全量灌入。
-
-## 稳定性防线（M6）
-
-### 限流/熔断规则代码化
-
-规则写在 `SentinelRuleConfig`（服务内）和 `SentinelGatewayConfig`（网关），Sentinel 控制台只读看实时 QPS/熔断状态。
-理由：规则是和容量一起演进的「工程常量」——压测得出阈值后改代码走评审；放控制台容易被随手改坏，且无法单测。
-
-| 规则 | 资源 | 阈值（配置可覆盖） | 挡什么 |
-|---|---|---|---|
-| FlowRule（QPS） | `seckill:createOrder` | 2000 | 下单入口总闸，保护 DB/MQ 不被瞬时流量打穿 |
-| ParamFlowRule | `seckill:createOrder` paramIdx=0 | 单活动 1000 | 热点活动不吃光其他活动的配额 |
-| DegradeRule（异常比例） | `dep:goods:*` / `dep:user:*` | 50%，熔断 10s | 慢依赖拖死调用方线程（雪崩防线） |
-| GatewayFlowRule | 路由 `seckill-service` | 5000 | 入口带宽总闸 |
-
-埋点统一走 `SentinelGuard.call(资源名, 被限流时抛的错误码, 业务动作, 热点参数...)`：被限流快速失败成业务码，
-**业务异常原样透传且不计入熔断统计**——否则「库存不足」「已抢过」这类正常业务拒绝会把依赖误判成故障，
-把熔断器打开。这条语义有专门单测守着。
-
-### Sentinel 控制台（只读观测）
-
-控制台不是必需的中间件，**没起也不影响任何限流/熔断行为**（规则在代码里，不靠控制台下发）。
-要看实时 QPS、被拦数量、熔断状态时再起：
-
-```bash
-bash scripts/sentinel-dashboard.sh          # 前台，Ctrl+C 停
-bash scripts/sentinel-dashboard.sh --bg     # 后台，日志 /tmp/sentinel-dashboard.log
+```powershell
+git clone https://github.com/guagua222-22/seckill.git
+cd seckill
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/dev/start.ps1
 ```
 
-打开 http://localhost:8858 ，账号密码都是 `sentinel`。
+脚本等待中间件健康、幂等建立三库、构建全部模块、按 user → goods → seckill → gateway 启动 JVM，最后启动现有监控组。Flyway 负责建表。默认不创建用户/商品/活动，不执行下单或清理数据。
 
-- **为什么不做成容器**：被监控的 4 个应用跑在宿主机，Sentinel 客户端会在宿主机开 8719+ 的
-  CommandCenter 端口，控制台需要反向连回来。装进容器就多一层 Docker Desktop 网络不确定性，收益为零。
-- **为什么 jar 不进仓库**：22MB 且不在 Maven Central（阿里云镜像 404），只能从 GitHub Releases 取。
-  按本机工具惯例放 `C:\Soft_Common\sentinel-dashboard\`，脚本里钉了 sha256 校验，缺失时打印下载命令。
-- **端口自动递增**：CommandCenter 默认 8719，被占就 +1。同时起 4 个应用时网关拿 8719、seckill 拿 8720，
-  控制台按 app 名区分，不必手工配 `transport.port`。
-- **没流量就看不到资源**：Sentinel 的资源树是懒建的，`eager: true` 只保证启动即上报心跳
-  （应用出现在左侧列表），资源要等第一个请求进来才有。压测时开着看最直观。
+- 验证台：[localhost:8080](http://localhost:8080/)
+- 看板：[Grafana M7](http://localhost:3000/d/seckill-m7)（`admin`；首次生成的密码见本地 `.env.monitoring`）
+- 抓取：[Prometheus Targets](http://localhost:9090/targets)；告警：[Alerts](http://localhost:9090/alerts)
+- 注册中心：[Nacos](http://localhost:8848/nacos)
 
-> **踩过的坑（时序 bug，值得单独记）**：`SentinelRuleConfig` 最初用 `@PostConstruct` 加载规则，
-> 结果控制台里永远只有网关、没有 seckill-service。根因是初始化顺序：yml 里的
-> `spring.cloud.sentinel.transport.dashboard` 要靠 SCA 自动配置的 `@PostConstruct` 搬进
-> `csp.sentinel.dashboard.server` 系统属性，而**自动配置 Bean 排在用户 Bean 之后实例化**——
-> 我的 `@PostConstruct` 抢先把 Sentinel 核心类初始化了，`SimpleHttpHeartbeatSender` 构造时读到的是
-> **空的控制台地址列表，而这个列表终身不再重读**，于是该 JVM 一个心跳都不发。客户端日志里只有一行
-> `WARNING [SimpleHttpHeartbeatSender] Dashboard server address not configured or not available`，
-> 而 CommandCenter 照常监听、手动调 `/registry/machine` 注册后指标也全对——所以极易误判成控制台的问题。
-> 同一根因还有个副作用：app 名退回成主类名，metrics 日志被写成
-> `com-seckill-seckill-SeckillServiceApplication-metrics.log` 而不是 `seckill-service-metrics.log`。
->
-> 修法是改用 `SmartInitializingSingleton.afterSingletonsInstantiated()`：它在**所有单例的
-> `@PostConstruct` 之后**、**Web 容器开始收流量之前**触发，两个条件正好都满足。网关侧同样改掉——
-> 它当时只是侥幸没踩中（`GatewayRuleManager` 没把 Sentinel 核心类拖起来），但隐患一模一样。
-> 排查入口：`C:\Users\<you>\logs\csp\sentinel-record.log.<日期>.*`，
-> 对比正常与异常实例的 `App name resolved from ...` 一行即可定位。
-
-### 热点隔离：多级缓存
-
-`is_hot=1` 的商品（goods 侧）和正在被下单的活动（seckill 侧）在 JVM 内多缓存一层 Caffeine（TTL 秒级），
-开抢瞬间不再让所有实例齐打 Redis 的同一个热点 key；`Caffeine.get(key, loader)` 自带 per-key single-flight，
-同实例内的并发回源被合并成一次。
-
-**分界线（整个设计里最重要的一条）**：本地缓存只放**配置/展示数据**（商品名、价格、活动时间窗），
-**库存永远现查现扣**——goods 的 `getDetail` 每次都查 `t_stock`，seckill 每一单都跑 Lua。
-展示数据可以短暂不一致，交易数据必须强一致；一旦把含库存的 VO 塞进本地缓存，TTL 窗口内就会卖超。
-两侧都有单测锁住这个不变量。
-
-### 多实例压测实测
-
-单机起 6 个实例（gateway 8080 / user 8081 / goods 8082+8092 / seckill 8083+8093），
-压测脚本 `scripts/loadtest/load.mjs`（Node 18+，零依赖，按「HTTP 状态/业务码」分桶统计，
-所以网关的 HTTP 429 和服务内的 `200/429` 能分开看）。
-
-**① 限流实测**——下单接口 20000 req / 并发 600，直连单个 seckill 实例：
-
-| 结果 | 数量 | 占比 | 实际速率 |
-|---|---|---|---|
-| `200/429` 被 Sentinel 拦（RATE_LIMITED） | 10324 | 51.6% | ~1032 req/s |
-| `200/3002` 放行到业务（已抢过） | 9676 | 48.4% | **969 req/s** |
-
-放行速率 969 req/s 精准贴着 `hot-activity-qps=1000`——绑住的是**热点参数规则**（单活动 1000）而不是
-总闸（`order-qps=2000`），因为全部流量都打在同一个 activityId 上。这正是热点参数限流的设计意图：
-单个爆款活动不能吃光整个下单入口的配额。
-
-被拦的 10324 个请求**一个都没碰下游**：压测后 Redis 库存仍是 995（1000−5）、`t_order`/`t_seckill_record`/
-`t_stock_operation` 都还是 5 条。快速失败不排队，语义与单测 `blockedSkipsAction` 一致。
-
-**② 热点隔离 A/B**——商品详情 10000 req / 并发 100，同一接口只切 `is_hot`：
-
-| 配置 | 吞吐 | p50 | p99 |
-|---|---|---|---|
-| `is_hot=1`（走 Caffeine） | 2617~2980 req/s | 29~34ms | 112~120ms |
-| `is_hot=0`（每次打 Redis） | 1583~1819 req/s | 51~58ms | 142~170ms |
-
-**收益：吞吐 +55%~+88%，p50 下降 33%~50%。**
-
-**③ 横向扩容的三个反直觉观察**（同一份 20000 req / 并发 600 的下单压力，直连 vs 经网关）：
-
-| 入口 | 总吞吐 | 被限流 | 单实例真实业务速率 |
-|---|---|---|---|
-| 直连 1 个实例 | 2001 req/s | 10324（51.6%） | 969 req/s |
-| 经网关 → 2 个实例 | 1286 req/s | **0** | 643 req/s ×2 |
-
-- **Sentinel 的 FlowRule/ParamFlowRule 是单机阈值，不是集群阈值**。经网关时总流量被 Nacos 轮询摊到两个实例，
-  每实例只有 ~643 req/s，够不到 1000 的线，于是一个都没拦。集群实际放行量 = 单机阈值 × 实例数，
-  **扩容会同步放大放行量**——要按集群总量限流得上 Sentinel 集群流控（token server），或在网关按路由限总闸。
-- **直连那 2001 req/s 是虚高的**：其中一半是被 Sentinel 秒拒的空转请求，真实业务吞吐只有 969 req/s。
-  两实例集群做到 1286 req/s，只有 **+33% 而不是 2×**——因为单活动的库存 key 在 Redis 里是天然串行点，
-  加实例扩不动它。这也是「热点隔离 / 库存分片」存在的根本理由。
-- **网关自身开销约 18%**：库存查询接口直连单实例 4125 req/s，经网关 3397 req/s（并发 600）。
-
-**④ 其他验收**：
-
-- **分布式布隆跨实例共享**：在 8092 上创建的商品，从 8082 和网关都能读到（6/6 成功）。Guava 本地布隆下这几乎必然 404。
-- **Nacos 负载均衡**：经网关压 6000 单，两实例各 +3001；压 20000 单，各 +10001/+10003——稳定 50/50 轮询
-  （用 `/actuator/metrics/http.server.requests` 的 COUNT 前后差值核对）。
-- **网关层 HTTP 429 未实测到**：`GatewayFlowRule` 阈值 5000，而本机 HTTP 天花板约 4100 req/s
-  （单进程 3397、双压测进程合计 4076 已饱和），物理上够不到。要演示需临时把
-  `gateway.sentinel.seckill-route-qps` 调低重启网关。这条规则在本机属于「备而不用」。
-
-## 数据库
-
-三个库同实例（MySQL :3307），各服务 Flyway 各自管理建表：
-
-| 库 | 表 |
-|---|---|
-| seckill_user | t_user |
-| seckill_goods | t_goods / t_stock / t_seckill_activity / t_stock_operation（幂等扣减流水） |
-| seckill_seckill | t_order / t_seckill_record / t_local_message |
-
-关键设计：`uk_user_activity`（一人一单）、`uk_request_id`（请求幂等）、`t_stock_operation.uk_request`（跨服务补偿幂等）、库存与商品分表（热点行隔离）。
-
-`scripts/db/`：`init-databases.sql`（建三库）、`migrate-data.sql`（旧 seckill 库数据一次性迁移，可重复执行）。
-
-## 测试
-
-```bash
-./mvnw clean verify        # 全模块单测 + jacoco（e2e 默认排除）
-./mvnw -pl seckill-seckill -Pe2e test   # 全栈 e2e：100 并发抢 100 库存（需全套环境在跑）
-node scripts/loadtest/load.mjs --mode detail --base http://localhost:8080 --goods <id> --total 10000 --concurrency 100
+```powershell
+# 已构建时跳过 Maven；观察已有活动的库存（替换为你的实际 ID）
+powershell -File scripts/dev/start.ps1 -SkipBuild -ActivityIds "2099130660617097217"
+# 不启动监控组件；新建 JVM 也不启用 monitoring profile
+powershell -File scripts/dev/start.ps1 -WithoutMonitoring
+# 只读状态检查
+powershell -File scripts/dev/status.ps1
+# 停止本脚本管理的 JVM；保留容器、数据卷和 IDEA 启动的进程
+powershell -File scripts/dev/stop.ps1
 ```
 
-- 单测：user 6 + goods 35 + seckill 58 + gateway 1 = 100（Lua 并发脚本测试直连 Redis db15，需 redis 容器在跑）；M7 另有 Prometheus 告警规则测试及只读联调脚本。
-- e2e：JDK HttpClient 直连网关，走"网关→Nacos→服务→MQ→三库"真实路径；环境未起自动跳过
-- 覆盖率：三业务服务 service 层 LINE ≥ 60%
-- Sentinel 规则是 **JVM 全局静态状态**，每个用到规则的测试类必须在 `@AfterEach` 里 `loadRules(List.of())` 清空，否则污染同批次其他测试
+已有本项目进程会复用，其代码与参数不会自动更新；重新构建不代表运行中的 JVM 已升级。端口被其他程序占用时会报错，不会杀进程抢端口。完整参数、IDEA/手动启动、故障恢复见 [运行手册](docs/runbook.md)。
 
-## 技术栈版本
+## 一次请求做了什么
 
-| 组件 | 版本 |
-|---|---|
-| Spring Boot / JDK | 3.2.5 / 21 |
-| Spring Cloud / Alibaba | 2023.0.2 / 2023.0.1.0（Nacos 2.3.2） |
-| MyBatis-Plus / Flyway | 3.5.7 / 9.22.3 |
-| MySQL / Redis | 8.0.36 / 7.2.4（docker） |
-| RocketMQ | 4.9.4（broker）+ starter 2.3.2（client 钉 5.3.1） |
-| Redisson | 3.32.0 |
-| Sentinel / Caffeine | 1.8.6 / 3.1.8（均由 SCA / Boot BOM 托管，pom 不写版本） |
+1. Gateway 路由级限流；秒杀服务做总 QPS 和热点活动参数限流。
+2. 检查 requestId 流水，读取 Caffeine / Redis 活动配置，校验时间窗，通过 Feign 校验用户并取得用户名快照。
+3. Lua 原子判断未预热、重复资格、库存不足，成功时扣 Redis 库存并登记用户。
+4. `RecordMessageWriter` 在**同一个本地事务**写秒杀流水和本地消息；事务提交后异步发送 MQ，接口返回 code=0。
+5. 消费端使用 SETNX、Redisson 锁和数据库唯一键降低重复处理，通过 goods 服务扣 DB 库存，在秒杀库插订单、推进流水。
+6. 发消息失败由补偿任务重发；异常路径有库存回滚、重试、对账。各机制的覆盖范围和剩余窗口见 [架构说明](docs/architecture.md) 与 [已知边界](docs/known-limitations.md)。
 
-### 环境踩坑记录
+**code=0 通常表示入口排队成功，不是异步订单最终成功。** 通过 `GET /api/order/query?requestId=...` 查询最终结果。HTTP 200 也可能携带业务失败码，压测按 HTTP 状态与业务码双维度统计。
 
-- **RocketMQ 端口**：10909/10911 落在 Windows WinNAT 保留段 10885-10984，broker 监听端口改 10996（客户端经 namesrv 自动获取）
-- **RocketMQ client 版本**：SCA BOM 会把 rocketmq-client 压到 5.1.4（与 starter 2.3.2 不兼容），根 pom 显式钉 5.3.1
-- **Feign + loadbalancer**：SC 2023 必须显式引入 loadbalancer，否则 `lb://` 报 No LoadBalancerClient
-- **gateway 依赖纪律**：严禁引 starter-web/seckill-common（webflux 冲突启动即挂）
-- **Nacos**：9848 gRPC 端口必须映射；WSL2 内存预算内堆压到 256m
-- **跨服务时间/Long 对称**：三服务 `spring.jackson.*` 逐字一致 + common 共享 JacksonConfig
-- **Jackson `readTree` 毁 BigDecimal scale**（M6 压测时抓到）：`readTree` + `treeToValue` 会先把 JSON 浮点解析成 `DoubleNode`，金额经 double 一转就丢精度——Redis 里存 `6999.00`，读出来变 `6999.0`。缓存反序列化必须直接 `readValue(json, Class)`，金额绝不允许走 double
-- **Gateway 限流响应**：webflux 下必须注册 `SentinelGatewayBlockExceptionHandler`，否则 `BlockException` 落成 500 而不是 429；`SentinelGatewayFilter` 要 `@Order(HIGHEST_PRECEDENCE)`，被拒的请求不该再消耗路由资源
-- **Redisson `tryInit` 参数只写一次**：`goods:bloom:ids` 已存在时改 `expected-insertions`/`false-probability` 不生效，必须先 `DEL` 再重启
-- **Windows GBK 控制台毁中文请求体**：`curl -d '{"name":"中文"}'` 会被编码搞坏，服务端报 400「请求体格式错误」。JSON 用 UTF-8 写进文件再 `--data-binary @file`，并显式带 `charset=UTF-8`
-- **运行中的 JVM 锁 jar**：Windows 下服务在跑时 `mvn package` 覆盖 `target/*.jar` 会失败。但 IDEA 里的服务是从 `target/classes` 起的，改完代码重启即生效，不必打包
-- **Sentinel 规则加载禁用 `@PostConstruct`**：会抢在 SCA 自动配置写入 `csp.sentinel.dashboard.server` 之前初始化 Sentinel 核心，心跳发送器读到空地址列表且终身不重读 → 控制台永远看不到该服务。必须用 `SmartInitializingSingleton.afterSingletonsInstantiated()`，详见「稳定性防线（M6）· Sentinel 控制台」
-- **Sentinel 控制台 jar 不在 Maven Central**：阿里云镜像 404，只能从 GitHub Releases 取（22MB）。放 `C:\Soft_Common\sentinel-dashboard\`，由 `scripts/sentinel-dashboard.sh` 校验 sha256 后启动；jar 不进仓库
+## 核心能力
+
+- Redis Lua 准入、数据库条件扣减、唯一索引：分别处理资格竞争、库存下限与订单唯一性。
+- 本地消息表 + RocketMQ：把异步投递意图持久化，失败重发；不是跨 Redis/MySQL/MQ 的全局事务。
+- 缓存：分布式布隆、空值缓存、逻辑过期与互斥重建、30–34 分钟随机物理 TTL；热点基础信息再加秒级 Caffeine。
+- 微服务：Nacos 注册发现、LoadBalancer 选实例、Feign 调用、按 requestId 记录跨服务库存操作、订单名称快照避免跨库关联。
+- 稳定性：单实例入口 2000 QPS、单活动 1000 QPS；单网关路由默认 5000 QPS；依赖异常比例熔断。阈值可配置，不能作为生产容量承诺。
+- 可观测性：HTTP QPS/RT 直方图、业务准入码、限流拒绝、缓存窗口命中率、有界库存采集；16 个 Grafana 面板、5 条 Prometheus 告警。
+
+## 性能摘要：保留口径，不堆数字
+
+下表是历史开发记录，本轮未重跑同条件容量实验。M2/M3 来自里程碑记录，M6 来自此前 README；旧 JMeter 原始结果及完整硬件参数未随仓库保留，不能直接拼成同口径性能曲线。
+
+| 阶段 / 场景 | 已有记录 | 能说明什么 |
+|---|---|---|
+| M2 DB 版 | 1000 并发抢 100 库存，超卖=0，约 199 QPS、RT 582ms | 历史场景下的功能和延迟记录 |
+| M3 Redis 化 | RT 104ms；详情约 6122 QPS | 历史优化记录，不能拿详情吞吐当下单吞吐 |
+| M6 热点详情 A/B | 热点 2617–2980 req/s；普通 1583–1819 req/s | 原记录中的本地缓存收益，环境与参数详见性能文档 |
+| M6 单实例限流 | 20000 请求中 10324 次限流、9676 次重复业务拒绝 | 验证限流保护，**不是成功落单 9676 次** |
+
+可复测命令、数据来源、不可直接比较的原因和结果模板见 [性能与证据](docs/performance.md)。简历优先写可解释的实现和验证，数字须能拿出原始记录。
+
+## 验证
+
+```powershell
+.\mvnw.cmd -B -ntp verify
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/dev/test.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/monitoring/verify.ps1
+```
+
+默认 Maven 测试共 100 个；其中 Lua 测试会访问本机 Redis 并**清空测试专用 DB15**，不能在共用 DB15 的环境执行。默认排除 e2e。JaCoCo 配置有 60% 门槛，统计范围应以各模块实际报告为准；并非整个项目所有代码达到 60%。
+
+历史 e2e 当前存在固定活动日期、并发集合及清理问题，未纳入本轮 M8 成功声明；在修复前不要把“默认测试通过”解读成“完整交易故障场景全部验证”。详见 [已知边界](docs/known-limitations.md)。
+
+## 里程碑
+
+| 阶段 | 交付 | 提交 |
+|---|---|---|
+| M0 | Docker / Maven Wrapper / Spring Boot / Flyway 骨架 | `b7225ad` |
+| M1 | 用户、商品、活动业务地基 | `b8d2324` |
+| M2 | DB 条件扣减、订单唯一约束、验证台 | `52bb93f` |
+| M3 | Lua 预扣、缓存与对账 | `095039d` |
+| M4 | MQ 异步、本地消息表、Long 字符串序列化 | `4d384a3`、`61b3c70` |
+| M5 | 四服务、三库、Feign、库存操作流水 | `07a646f` |
+| M6 | Sentinel、Caffeine、分布式布隆、实验台 | `9266068`、`3961555`、`eefff5c` |
+| M7 | Prometheus / Grafana / 指标与告警 | `bdc6180` |
+| M8 | 文档收口、启动器、性能证据、面试与简历 | 本次交付 |
+
+## 技术栈与目录
+
+JDK 21；Spring Boot 3.2.5；Spring Cloud 2023.0.2；Alibaba 2023.0.1.0；MyBatis-Plus 3.5.7；MySQL 8.0.36；Redis 7.2.4；Nacos 2.3.2；RocketMQ broker 4.9.4 / starter 2.3.2 / client 5.3.1；Redisson 3.32.0；Sentinel/Caffeine/Micrometer 版本由现有 BOM 管理。监控镜像固定为 Prometheus 3.13.3、Grafana 13.2.1。
+
+```text
+seckill-common/            公共契约
+seckill-user/              用户域
+seckill-goods/             商品、活动、库存与缓存
+seckill-seckill/           准入、异步消费、订单、补偿、验证台
+seckill-gateway/           WebFlux 网关
+scripts/dev/              本机启动、停止、状态与脚本测试
+scripts/db/               幂等建库、历史迁移脚本
+scripts/loadtest/         HTTP 压测客户端
+monitoring/               Prometheus / Grafana 配置
+docs/                     架构、运维、性能、面试与边界
+```
+
+本地配置含开发用数据库账号，管理/业务接口尚未建立完整认证授权体系，支付、订单超时取消、线上高可用部署等不属于当前已完成范围。继续开发的优先级见 [已知边界](docs/known-limitations.md)。

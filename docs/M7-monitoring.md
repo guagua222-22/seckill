@@ -180,7 +180,7 @@ Java 测试覆盖真实 Sentinel 拒绝回调、业务异常不计为 Sentinel �
 
 你可以这样向面试官概括：**“我给秒杀链路接了 Micrometer + Prometheus + Grafana。HTTP 指标关注吞吐和尾延迟，业务指标补充 HTTP 200 里隐藏的限流和失败；集群分位数通过直方图合桶计算。库存监控用有界活动白名单定时批量读取，并让抓取端只读内存，避免监控反过来拖慢交易。”**
 
-别把“入口排队成功率”说成“异步订单最终成功率”。消费延迟、MQ 堆积、消息补偿积压、Redis/MySQL exporter、链路追踪和正式通知渠道仍是后续可扩展项。本次 M7 不顺带改这些交易路径，也不提前完成 M8。
+别把“入口排队成功率”说成“异步订单最终成功率”。消费延迟、MQ 堆积、消息补偿积压、Redis/MySQL exporter、链路追踪和正式通知渠道仍是后续可扩展项。M8 的完整启动与学习入口见 [运行手册](runbook.md) 和 [面试讲解](interview.md)。
 
 ## 8. 本次本机验收记录（2026-09-14）
 
@@ -192,6 +192,6 @@ Java 测试覆盖真实 Sentinel 拒绝回调、业务异常不计为 Sentinel �
 - 库存观察使用已有活动 `2099130660617097217`、`2098789606474838018`；两者均已结束，采集状态为 1，库存为 -1（key 不存在），没有为造曲线创建或预热活动。
 - 原业务端口不返回 Prometheus 指标。MVC 服务会将路径不存在包装成 HTTP 200 + 业务码 500；验收脚本同时检查响应内容，避免将其误判为指标泄露。该既有异常处理行为留待独立改进。
 
-当前后台运行的是 `logs/m7-runtime/` 中的 jar 副本，日志在 `logs/m7-*.out.log`，进程清单在 `logs/m7-processes.json`。运行副本与 `target/` 分开，避免 Windows 下构建覆盖正在运行的 jar。后续修改源码后，需重新构建并重新启动对应服务；不要同时在 IDEA 再启动相同端口。监控启动/验收脚本在 `scripts/monitoring/`，四服务的一键启动整理仍留给 M8。
+上述 M7 验收当时使用 `logs/m7-runtime/` 中的 jar 副本，日志在 `logs/m7-*.out.log`，进程清单在 `logs/m7-processes.json`；这是历史记录，不代表现在的启动方式。M8 已提供 [四服务启动器](../scripts/dev/start.ps1)，新进程使用 `logs/dev/`，已有 IDEA 服务会复用。修改源码后仍需重新构建并从原启动入口重启；详细规则见 [运行手册](runbook.md)。
 
 参考官方文档：[Spring Boot 3.2 Actuator](https://docs.spring.io/spring-boot/docs/3.2.x/reference/html/actuator.html)、[Micrometer 缓存指标](https://docs.micrometer.io/micrometer/reference/reference/cache.html)、[Prometheus 埋点实践](https://prometheus.io/docs/practices/instrumentation/)、[Grafana 配置导入](https://grafana.com/docs/grafana/latest/administration/provisioning/)。
